@@ -1,4 +1,4 @@
-![Bleb](http://i.imgur.com/v84NCnR.png)
+![Bleb](http://i.imgur.com/5hycZj5.png)
 
 ### Hierarchical Object Repository
 ---
