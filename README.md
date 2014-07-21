@@ -1,6 +1,5 @@
-![Bleb logo for plebs](http://i.imgur.com/v84NCnR.png)
+![Bleb](http://i.imgur.com/v84NCnR.png)
 
-# Bleb
 ### Hierarchical Object Repository
 ---
 >In medicine, a bleb is a large blister (usually approximately hemispherical) filled with serous fluid.
