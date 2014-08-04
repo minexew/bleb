@@ -1,0 +1,43 @@
+Header
+    char magic[4] = 0x89 'ble'
+    uint32_t formatVersion
+
+    (Content Directory Stream Descriptor)
+    uint64_t location   (offset in file)
+    uint64_t length
+
+Directory Stream
+    (Prologue)
+    uint16_t flags (1=has storage descriptor)
+    uint32_t numObjects
+
+    (Storage Descriptor - specifies external storage of object payload)
+
+    Object Entries
+        (Prologue - padded to multiple of 16 bytes)
+        uint16_t flags (1=is a directory, 2=has stream descriptor, 4=has storage descriptor, 8=has md5 hash, 16=has inline payload, 32=is text)
+        uint16_t nameLength     (highest bit = entry is invalid & reclaimable)
+        uint8_t[] name
+
+        (Stream Descriptor - specifies the stream containing object payload - 16 bytes)
+        uint64_t location   (offset in file)
+        uint64_t length
+
+        (Storage Descriptor - specifies external storage of object payload)
+
+        (MD5 hash - 16 bytes)
+        uint8_t[16] md5
+
+        (Inline Payload - embeds object payload in directory - padded to multiple of 16 bytes)
+        uint8_t length
+        uint8_t[] payload
+
+Stream encoding
+    (Span Header)
+    uint32_t reservedLength
+    uint32_t usedLength
+    uint64_t nextSpanLocation
+    ubyte[reservedLength] data
+
+    <jump to nextSpanLocation if != 0>
+    <repeat>
