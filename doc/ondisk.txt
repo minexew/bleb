@@ -1,6 +1,6 @@
 Header
-    char magic[4] = 0x89 'ble'
-    uint32_t formatVersion
+    char magic[7] = 0x89 'bleb' 0x0D 0x0A
+    uint8_t formatVersion = 0x01
 
     (Content Directory Stream Descriptor)
     uint64_t location   (offset in file)
@@ -14,9 +14,15 @@ Directory Stream
     (Storage Descriptor - specifies external storage of object payload)
 
     Object Entries
-        (Prologue - padded to multiple of 16 bytes)
-        uint16_t flags (1=is a directory, 2=has stream descriptor, 4=has storage descriptor, 8=has md5 hash, 16=has inline payload, 32=is text)
-        uint16_t nameLength     (highest bit = entry is invalid & reclaimable)
+        (Prologue)
+        uint16_t length (valid entry length - actual length is padded to 16 bytes; highest bit = entry has been invalidated)
+        uint16_t flags  0x0001 = is a directory
+                        0x0002 = has stream descriptor
+                        0x0004 = has storage descriptor
+                        0x0008 = has md5 hash
+                        0x0010 = has inline payload
+                        0x1001 = is text
+        uint16_t nameLength
         uint8_t[] name
 
         (Stream Descriptor - specifies the stream containing object payload - 16 bytes)
@@ -28,8 +34,7 @@ Directory Stream
         (MD5 hash - 16 bytes)
         uint8_t[16] md5
 
-        (Inline Payload - embeds object payload in directory - padded to multiple of 16 bytes)
-        uint8_t length
+        (Inline Payload)
         uint8_t[] payload
 
 Stream encoding

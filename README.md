@@ -1,9 +1,11 @@
 ![Bleb](http://i.imgur.com/5hycZj5.png)
 
-### Hierarchical Object Repository
+### Structured Object Repository
 ---
 >In medicine, a bleb is a large blister (usually approximately hemispherical) filled with serous fluid.
 >&mdash; Wikipedia
+
+(not to be confused with [similarly sounding words](http://www.urbandictionary.com/define.php?term=pleb))
 
 ## Goals
 
@@ -28,50 +30,7 @@
 TODO
 
 ## On-disk format
-```
-Header
-    char magic[4] = 0x89 'ble'
-    uint32_t formatVersion
-
-    (Content Directory Stream Descriptor)
-    uint64_t location   (offset in file)
-    uint64_t size
-
-Directory Stream
-    (Prologue)
-    uint16_t flags (1=has storage descriptor)
-    uint32_t numObjects
-
-    (Storage Descriptor - specifies external storage of object payload)
-
-    Object Entries
-        (Prologue - padded to multiple of 16 bytes)
-        uint16_t flags (1=is a directory, 2=has stream descriptor, 4=has storage descriptor, 8=has md5 hash, 16=has inline payload, 32=is text)
-        uint16_t+uint8_t[] name     (empty = deleted entry ... TODO)
-
-        (Stream Descriptor - specifies the stream containing object payload - 16 bytes)
-        uint64_t location   (offset in file)
-        uint64_t size
-
-        (Storage Descriptor - specifies external storage of object payload)
-
-        (MD5 hash - 16 bytes)
-        uint8_t[16] md5
-
-        (Inline Payload - embeds object payload in directory - padded to multiple of 16 bytes)
-        uint8_t length
-        uint8_t[] payload
-
-Stream encoding
-    (Span Header)
-    uint32_t reservedLength
-    uint32_t usedLength
-    uint64_t nextSpanLocation
-    ubyte[reservedLength] data
-
-    <jump to nextSpanLocation if != 0>
-    <repeat>
-```
+[Work in progress](doc/ondisk.txt)
 
 ## Example repository
 ### sample.bleb
@@ -87,14 +46,10 @@ Content Directory
 '-- Textures
     |-- 12345...bcdef   => jpg image
     '-- 23456...cdef0   => png image
-
-System Directory
-'-- Index of 'Content Directory'/'Textures' => B-tree index for faster searching in directory
 ```
 
 ### Assorted implementation ideas
 - fully load small objects (< 4k? < 64k? use a pool?) when opened as a stream
-- align big objects on 4k boundary
 - allocation strategy:
     - depending on expected data size, reserve first 256..4k+ for small objects
     - solves: attempt to place metadata (and related directory entries in first 4k)

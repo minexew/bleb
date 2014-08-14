@@ -6,18 +6,44 @@
 
 namespace bleb {
 
+template <typename T> T min(T a, T b) {
+    return (a < b) ? a : b;
+}
+
+template <typename T> T roundUpBlockLength(T length) {
+    T roundUpTo;
+
+    // 0-255:       round to 32
+    // 256-4k:      round to 256
+    // 4k-128k:     round to 4k
+    // 128k+:       round to 16k
+
+    if (length < 256)
+        roundUpTo = 32;
+    else if (length < 4 * 1024)
+        roundUpTo = 256;
+    else if (length < 128 * 1024)
+        roundUpTo = 4096;
+    else
+        roundUpTo = 16 * 1024;
+
+    return align(length, roundUpTo);
+}
+
 class RepositoryStream /*: IOStream*/ {
     Repository* repo;
     ByteIO* io;
+    bool isReadOnly = false;
 
     uint64_t descrLocation;
     StreamDescriptor_t descr;
+    bool descrDirty;
 
     uint64_t pos;
 
     bool haveCurrentSpan;
-    SpanHeader_t currentSpan;
-    uint64_t posInCurrentSpan, currentSpanPosInStream;
+    SpanHeader_t firstSpan, currentSpan;
+    uint64_t currentSpanLocation, currentSpanPosInStream, posInCurrentSpan;
 
 public:
     RepositoryStream(Repository* repo, uint64_t streamDescriptorLocation) {
@@ -25,12 +51,15 @@ public:
         this->io = repo->io;
         this->descrLocation = streamDescriptorLocation;
 
+        descrDirty = false;
         haveCurrentSpan = false;
 
         retrieveStruct(io, descrLocation, descr);
 
-        if (descr.location != 0)
+        if (descr.location != 0) {
             retrieveStruct(io, descr.location, firstSpan);
+            setCurrentSpan(firstSpan, descr.location, 0);
+        }
     }
 
     RepositoryStream(Repository* repo, uint64_t streamDescriptorLocation, uint32_t reserveLength,
@@ -39,25 +68,28 @@ public:
         this->io = repo->io;
         this->descrLocation = streamDescriptorLocation;
 
-        haveCurrentSpan = false;    // fixme?
+        descrDirty = false;
+        haveCurrentSpan = false;
 
         // create a new stream
-        uint64_t spanLocation = repo->reserveSpan(reserveLength, expectedSize);
-
-        // initialize span
-        SpanHeader_t header;
-        header.reservedLength = reserveLength;
-        header.usedLength = 0;
-        header.nextSpanLocation = 0;
-
-        storeStruct(io, spanLocation, header);
-        firstSpan = header;
+        uint64_t firstSpanLocation;
+        assert(repo->allocateSpan(firstSpanLocation, firstSpan, reserveLength)); // FIXME: error handling
 
         // initialize Stream Descriptor
-        this->descr.location = spanLocation;
-        this->descr.length = 0;
+        descr.location = firstSpanLocation;
+        descr.length = 0;
+        descrDirty = true;
 
-        storeStruct(io, descrLocation, this->descr);
+        setCurrentSpan(firstSpan, firstSpanLocation, 0);
+    }
+
+    ~RepositoryStream() {
+        if (descrDirty)
+            storeStruct(io, descrLocation, descr);
+    }
+
+    uint64_t getPos() {
+        return pos;
     }
 
     uint64_t getSize() {
@@ -66,152 +98,167 @@ public:
 
     void setPos(uint64_t pos) {
         this->pos = pos;
+        //haveCurrentSpan = false;        // FIXME: haveCurrentSpan x currentSpanIsTheOne
+        gotoRightSpan();    // FIXME
     }
 
     size_t read(void* buffer_in, size_t length) {
+        if (length == 0)
+            return 0;
 
+        uint8_t* buffer = reinterpret_cast<uint8_t*>(buffer_in);
 
+        size_t readTotal = 0;
 
-        if (!haveCurrentSpan)
-            gotoRightSpan();
+        if (!haveCurrentSpan) {
+            printf("goto right for read\n");
+            if (!gotoRightSpan())
+                return readTotal;
+        }
+
+        for (; length > 0;) {
+            // start by checking whether we currently are within any span
+
+            const uint64_t remainingBytesInSpan = currentSpan.usedLength - posInCurrentSpan;
+printf("%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posInCurrentSpan);
+            if (remainingBytesInSpan > 0) {
+                const size_t read = min<uint64_t>(remainingBytesInSpan, length);
+
+                if (!io->getBytesAt(currentSpanLocation + SpanHeader_t::SIZE + posInCurrentSpan, buffer, read))
+                    return false;
+
+                posInCurrentSpan += read;
+                pos += read;
+                readTotal += read;
+
+                buffer += read;
+                length -= read;
+            }
+
+            if (length > 0) {
+                // continue in next span
+                SpanHeader_t nextSpan;
+
+                uint64_t nextSpanLocation = currentSpan.nextSpanLocation;
+
+                if (nextSpanLocation != 0) {
+                    if (!retrieveStruct(io, nextSpanLocation, nextSpan))
+                        return readTotal;    // FIXME: errors
+                }
+                else {
+                    assert(false);
+                }
+
+                setCurrentSpan(nextSpan, nextSpanLocation, currentSpanPosInStream + currentSpan.reservedLength);
+            }
+        }
+
+        return readTotal;
     }
 
     size_t write(const void* buffer_in, size_t length) {
-        if (isReadOnly || count == 0)
+        if (isReadOnly || length == 0)
             return 0;
 
         const uint8_t* buffer = reinterpret_cast<const uint8_t*>(buffer_in);
 
         size_t writtenTotal = 0;
 
-        for (;;) {
+        if (!haveCurrentSpan) {
+            if (descr.length == 0) {
+                // the block is empty; allocate initial span
+                uint64_t firstSpanLocation;
+
+                if (!repo->allocateSpan(firstSpanLocation, firstSpan, length))
+                    return writtenTotal;    // FIXME: errors
+
+                setCurrentSpan(firstSpan, firstSpanLocation, 0);
+
+                descr.location = firstSpanLocation;
+                descrDirty = true;
+            }
+            else {
+                printf("goto right for write\n");
+                // seek; will fail if pos > length
+                if (!gotoRightSpan())
+                    return writtenTotal;    // FIXME: errors
+            }
+        }
+
+        for (; length > 0;) {
             // start by checking whether we currently are within any span
 
-            if (haveCurrentSpan) {
-                if (descr.length == 0) {
-                    // the block is empty; allocate initial span
-
-                    if (!AllocateSpan(&first_span, count))
-                        return writtenTotal;
-
-                    setCurrentSpan(firstSpan);
-                    currentSpanPosInStream = 0;
-
-                    // we'll have to update first_span in block desc
-                    updateDesc = true;
-                }
-                else
-                    // seek; will fail if pos > length
-                    if (!gotoRightSpan())
-                        return writtenTotal;
-            }
-
-            // we now have a valid span to write into
-            // if the span has a chaining tag on its end, the usable capacity will be 8 bytes less
-            // in that case we might have to fetch or allocate more spans
-
-            // how many bytes from current pos till the end of this span?
-            //const uint64_t maxRemainingBytesInSpan = curr_span.sect_count * mf->sectorSize - curr_span_pos;
-
-            //const uint64_t newLength = li::maximum<uint64_t>(length, pos + count);
-
-            // are there/will there be any more spans beyond this one? if so, last 8 bytes are used for chaining
-            //const int64_t remainingBytesInSpan = maxRemainingBytesInSpan
-            //    - (curr_span_in_stream + curr_span.sect_count * mf->sectorSize < newLength ? 8 : 0);
-
-            const int64_t remainingBytesInSpan = currentSpan.reservedLength - posInCurrentSpan;
+            const uint64_t remainingBytesInSpan = currentSpan.reservedLength - posInCurrentSpan;
 
             if (remainingBytesInSpan > 0) {
-                const size_t written = min(remainingBytesInSpan, count);
+                const size_t written = min<uint64_t>(remainingBytesInSpan, length);
 
-                if (!io->setBytesAt(currentSpanLocation + SpanHeader_t::SIZE + posInCurrentSpan, buffer_in, written))
+                if (!io->setBytesAt(currentSpanLocation + SpanHeader_t::SIZE + posInCurrentSpan, buffer, written))
                     return false;
 
-                curr_span_pos += written;
+                posInCurrentSpan += written;
                 pos += written;
-                written_total += written;
+                writtenTotal += written;
 
                 if (pos > descr.length) {
                     descr.length = pos;
-                    updateDesc = true;
+                    descrDirty = true;
                 }
 
                 ////if (written < (unsigned int) affectedBytesInSpan)
-                    return written_total;
+                //    return writtenTotal;
 
-                buffer_in += written;
-                count -= written;
+                buffer += written;
+                length -= written;
+
+                currentSpan.usedLength = posInCurrentSpan;
+
+                if (!storeStruct(io, currentSpanLocation, currentSpan))
+                    return writtenTotal;
+
+                // we cache firstSpan, so it might need to be updated
+                if (currentSpanPosInStream == 0)
+                    firstSpan = currentSpan;
             }
 
-            if (count > 0) {
-                // we'll have to go beyond this span
-                // if there is a chaining tag already, we'll take the jump,
-                // otherwise we have to allocate a new span
+            if (length > 0) {
+                // continue in next span
+                SpanHeader_t nextSpan;
 
-                // will any more data fit in this span?
+                uint64_t nextSpanLocation = currentSpan.nextSpanLocation;
 
-                else
-                    mf->file->setPos(curr_span.sect_first * mf->sectorSize + curr_span_pos + affectedBytesInSpan);
+                if (nextSpanLocation != 0) {
+                    // next span had been already allocated
 
-                if (tailLength > 8)
-                {
-                    zmfSpan_t next_span;
-
-                    // read the tag for next span
-                    if (!mf->file->readLE<uint32_t>(&next_span.sect_first)
-                        || !mf->file->readLE<uint32_t>(&next_span.sect_count))
-                        return written_total;
-
-                    if (!CanJumpTo(curr_span, next_span))
-                        return false;
-
-                    // loop for next span
-                    curr_span_in_stream += curr_span.sect_count * mf->sectorSize - 8;
-                    SetCurrent(&next_span);
+                    if (!retrieveStruct(io, nextSpanLocation, nextSpan))
+                        return writtenTotal;    // FIXME: errors
                 }
-                else
-                {
-                    // current data ends within this span; we might have to copy a couple of byte
-                    // if they are to be rewritten with the chaining tag
+                else {
+                    // allocate a new span to hold the rest of the data
 
-                    uint8_t tail[8];
+                    if (!repo->allocateSpan(nextSpanLocation, nextSpan, length))
+                        return writtenTotal;
 
-                    if (tailLength > 0)
-                        if (mf->file->read(tail, (size_t) tailLength) != (size_t) tailLength)
-                            return written_total;
+                    // update CURRENT span to point to the NEW span
+                    currentSpan.nextSpanLocation = nextSpanLocation;
 
-                    zmfSpan_t new_span;
+                    if (!storeStruct(io, currentSpanLocation, currentSpan))
+                        return writtenTotal;    // FIXME: errors
 
-                    // allocate a new span
-                    if (!AllocateSpan(&new_span, count))
-                        return written_total;
-
-                    // write chaining tag
-                    if (!mf->file->setPos((curr_span.sect_first + curr_span.sect_count) * mf->sectorSize - 8)
-                        || !mf->file->writeLE<uint32_t>(new_span.sect_first)
-                        || !mf->file->writeLE<uint32_t>(new_span.sect_count))
-                        return written_total;
-
-                    // jump to new span
-                    curr_span_in_stream += curr_span.sect_count * mf->sectorSize - 8;
-                    SetCurrent(&new_span);
-
-                    // flush saved data (if any) and loop for the newly allocated span
-                    if (tailLength > 0)
-                    {
-                        if (!mf->file->setPos(curr_span.sect_first * mf->sectorSize)
-                            || mf->file->write(tail, (size_t) tailLength) != (size_t) tailLength)
-                            return written_total;
-
-                        curr_span_pos = tailLength;
-                    }
+                    // we cache firstSpan, so it might need to be updated
+                    if (currentSpanPosInStream == 0)
+                        firstSpan = currentSpan;
                 }
+
+                setCurrentSpan(nextSpan, nextSpanLocation, currentSpanPosInStream + currentSpan.reservedLength);
             }
         }
-    }
+
+        return writtenTotal;
     }
 
 private:
+
     bool gotoRightSpan() {
         // FIXME: this is highly unoptimal right now (and possibly broken)
         // we're always starting from the block beginning and going span-by-span
@@ -219,59 +266,64 @@ private:
         if (descr.location == 0)        // we don't actually "exist"
             assert(false);
 
-        SetCurrent(&first_span);
-        currentSpanPosInStream = 0;
-
-        if (pos > length)
+        if (pos > descr.length)
             return false;
+
+        setCurrentSpan(firstSpan, descr.location, 0);
 
         while (pos != currentSpanPosInStream) {
             // this should never happen
-            if (currentSpanPosInStream > length)
+            if (currentSpanPosInStream > descr.length)
                 assert(false);
 
             // is the 'pos' we're looking for within this span?
-            if (pos < currentSpanPosInStream + currentSpan.reservedLength) {
+            if (pos <= currentSpanPosInStream + currentSpan.reservedLength) {
                 posInCurrentSpan = pos - currentSpanPosInStream;
                 break;
             }
 
-            //const uint64_t maxPossibleBytesInSpan = curr_span.sect_count * mf->sectorSize;
-
-            // does this span have an 8-byte tag at its end?
-            // we can find out by checking whether it contains the rest of the block
-            //const uint64_t bytesInSpan = maxPossibleBytesInSpan
-            //    - (currentSpanPosInStream + maxPossibleBytesInSpan < length ? 8 : 0);
-
-            // is the 'pos' we're looking for within this span?
-            //if (pos <= currentSpanPosInStream + bytesInSpan) {
-            //    posInCurrentSpan = pos - currentSpanPosInStream;
-            //    break;
-            //}
-
             SpanHeader_t nextSpan;
+            uint64_t nextSpanLocation = currentSpan.nextSpanLocation;
 
-            if (!retrieveStruct(io, currentSpan.nextSpanLocation, nextSpan))
-                return false;
+            assert(nextSpanLocation != 0);  // FIXME: errors
 
-            // read the tag for next span
-            /*if (!mf->file->setPos(curr_span.sect_first * mf->sectorSize + bytesInSpan)
-                || !mf->file->readLE<uint32_t>(&next_span.sect_first)
-                || !mf->file->readLE<uint32_t>(&next_span.sect_count))
-                return false;*/
+            if (!retrieveStruct(io, nextSpanLocation, nextSpan))
+                return false;   // FIXME: errors
 
-            setCurrentSpan(&nextSpan);
-            currentSpanPosInStream += bytesInSpan;
+            setCurrentSpan(nextSpan, nextSpanLocation, currentSpanPosInStream + currentSpan.reservedLength);
         }
 
         return true;
     }
 
-    void setCurrentSpan(const SpanHeader_t& span) {
+    void setCurrentSpan(const SpanHeader_t& span, uint64_t spanLocation, uint64_t spanPosInStream) {
         currentSpan = span;
+
+        currentSpanLocation = spanLocation;
+        currentSpanPosInStream = spanPosInStream;
         posInCurrentSpan = 0;
+
+        haveCurrentSpan = true;
     }
 };
+
+inline bool getBytesAt(RepositoryStream* io, uint64_t pos, uint8_t* buffer, uint64_t count) {
+    return io->setPos(pos), io->read(buffer, count) == count;
+}
+
+inline bool setBytesAt(RepositoryStream* io, uint64_t pos, const uint8_t* buffer, uint64_t count) {
+    return io->setPos(pos), io->write(buffer, count) == count;
+}
+
+inline bool clearBytesAt(RepositoryStream* io, uint64_t pos, uint64_t count) {
+    io->setPos(pos);
+
+    while (count--)
+        if (!io->write("\x00", 1))
+            return false;
+
+    return true;
+}
 
 class RepositoryDirectory {
     RepositoryStream* directoryStream;
@@ -285,12 +337,110 @@ public:
     RepositoryDirectory(RepositoryStream* directoryStream) {
         this->directoryStream = directoryStream;
     }
+
+    ~RepositoryDirectory() {
+        delete directoryStream;
+    }
+
+    void setObjectContents1(const char* objectName, const uint8_t* contents, size_t contentsLength,
+            unsigned int flags, unsigned int objectFlags) {
+        // FIXME: error handling
+        // Browse the directory and look for the object already existing
+        // Also mark any nice usable spot to put it in
+
+        const size_t objectNameLength = strlen(objectName);
+        const uint16_t prologueLength = objectEntryPrologueLength(objectNameLength);
+
+        bool useInlinePayload = false;
+
+        if (flags & PREFER_INLINE_PAYLOAD) {
+            if (prologueLength + contentsLength < ObjectEntryPrologueHeader_t::LENGTH_MASK)
+                useInlinePayload = true;
+        }
+
+        uint16_t objectEntryLength;
+
+        if (!useInlinePayload) {
+            objectFlags |= ObjectEntryPrologueHeader_t::HAS_STREAM_DESCR;
+            objectEntryLength = prologueLength + StreamDescriptor_t::SIZE;
+        }
+        else {
+            objectFlags |= ObjectEntryPrologueHeader_t::HAS_INLINE_PAYLOAD;
+            objectEntryLength = prologueLength + contentsLength;
+        }
+
+        const uint16_t paddedObjectEntryLength = align(objectEntryLength, 16);
+
+        ObjectEntryPrologueHeader_t objectPrologueHeader;
+        objectPrologueHeader.length = objectEntryLength;
+        objectPrologueHeader.flags = objectFlags;
+        objectPrologueHeader.nameLength = objectNameLength;
+
+        StreamDescriptor_t streamDescr;
+        streamDescr.location = 0;
+        streamDescr.length = 0;
+        assert(useInlinePayload);
+
+        directoryStream->setPos(0);
+
+        uint64_t pos = 0;
+
+        while (pos < directoryStream->getSize()) {
+            ObjectEntryPrologueHeader_t prologueHeader;
+
+            if (!retrieveStruct(directoryStream, pos, prologueHeader)) {
+                return;
+            }
+
+            const uint16_t paddedEntryLength = align(prologueHeader.length & ObjectEntryPrologueHeader_t::LENGTH_MASK, 16);
+
+            if (prologueHeader.length & ObjectEntryPrologueHeader_t::IS_INVALIDATED) {
+                // entry is invalidated, might be a candidate for overwriting
+            }
+            else {
+                if (prologueHeader.nameLength == objectNameLength) {
+                    // compare entry names
+
+                }
+            }
+
+            pos += paddedEntryLength;
+        }
+
+        // no match found; create new entry
+        if (!storeStruct(directoryStream, pos, objectPrologueHeader))
+            return;
+
+        pos += ObjectEntryPrologueHeader_t::SIZE;
+
+        if (!setBytesAt(directoryStream, pos, (const uint8_t*) objectName, objectNameLength))
+            return;
+
+        pos += objectNameLength;
+
+        if (useInlinePayload) {
+            if (!setBytesAt(directoryStream, pos, contents, contentsLength))
+                return;
+
+            pos += contentsLength;
+
+            // padding
+            if (!clearBytesAt(directoryStream, pos, paddedObjectEntryLength - objectEntryLength))
+                return;
+        }
+        else
+            assert(false);
+    }
 };
 
 Repository::Repository(ByteIO* bio, bool canCreateNew) {
     this->io = bio;
 
     this->canCreateNew = canCreateNew;
+}
+
+Repository::~Repository() {
+    close();
 }
 
 bool Repository::open() {
@@ -305,7 +455,7 @@ bool Repository::open() {
         if (!canCreateNew)
             return error("can't create new"), false;
 
-        memcpy(prologue.magic, prologueMagic, 4);
+        memcpy(prologue.magic, prologueMagic, sizeof(prologueMagic));
         prologue.formatVersion = 1;
 
         if (!storeStruct(io, 0, prologue)
@@ -325,7 +475,7 @@ bool Repository::open() {
         if (!retrieveStruct(io, 0, prologue))
             return false;
 
-        if (memcmp(prologue.magic, prologueMagic, 4) != 0)
+        if (memcmp(prologue.magic, prologueMagic, sizeof(prologueMagic)) != 0)
             return error("magic doesn't match"), false;
 
         if (prologue.formatVersion > 1)
@@ -340,6 +490,9 @@ bool Repository::open() {
 
 void Repository::close() {
     if (isOpen) {
+        diagnostic("repo:\tClosing Content Directory");
+        delete contentDirectory;
+
         isOpen = false;
     }
 
@@ -347,26 +500,33 @@ void Repository::close() {
     io = nullptr;
 }
 
-uint64_t Repository::reserveSpan(uint64_t reserveLength, uint64_t expectedSize) {
-    uint64_t pos = (io->getSize() + reserveAlignment) & ~reserveAlignment;
-    diagnostic("clearing (pre, dat...)");
+bool Repository::allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, uint64_t dataLength) {
+    dataLength = roundUpBlockLength(dataLength);
+
+    uint64_t pos = align(io->getSize(), /*reserveAlignment*/ 1);
+    diagnostic("allocating %u-byte span @ %u (end at %u)", (unsigned) dataLength, (unsigned) pos,
+            (unsigned) (pos + StreamDescriptor_t::SIZE + dataLength));
+
+    // initialize span
+    SpanHeader_t header;
+    header.reservedLength = dataLength;
+    header.usedLength = 0;
+    header.nextSpanLocation = 0;
+
+    // alignment
     clearBytesAt(io, io->getSize(), pos - io->getSize());
-    clearBytesAt(io, pos, StreamDescriptor_t::SIZE + reserveLength);
-    return pos;
+    // header
+    storeStruct(io, pos, header);
+    // data
+    clearBytesAt(io, pos + StreamDescriptor_t::SIZE, dataLength);
+
+    location_out = pos;
+    header_out = header;
+    return true;
 }
 
 void Repository::setObjectContents1(const char* objectName, const char* contents) {
-    this->setObjectContentsInDirectory1(contentDirectory, objectName, contents, strlen(contents))
-}
-
-void Repository::setObjectContentsInDirectory1(RepositoryDirectory* dir, const char* objectName, const void* contents, size_t length) {
-    // Browse the directory and look for the object already existing
-    // Also mark any nice usable spot to put it in
-
-    const size_t objectNameLength = strlen(objectName);
-
-    const auto newEntryLength = objectEntryPrologueLength(objectNameLength);
-
-    ;
+    contentDirectory->setObjectContents1(objectName, (const uint8_t*) contents, strlen(contents),
+            PREFER_INLINE_PAYLOAD, ObjectEntryPrologueHeader_t::IS_TEXT);
 }
 }

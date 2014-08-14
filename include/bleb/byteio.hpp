@@ -25,7 +25,7 @@ inline bool clearBytesAt(ByteIO* io, uint64_t pos, uint64_t count) {
     return io->clearBytesAt(pos, count);
 }
 
-template <class Struct>
+template <class ByteIO, class Struct>
 bool retrieveStruct(ByteIO* io, uint64_t pos, Struct& st) {
     uint8_t buffer[Struct::SIZE];
 
@@ -36,7 +36,7 @@ bool retrieveStruct(ByteIO* io, uint64_t pos, Struct& st) {
     return true;
 }
 
-template <class Struct>
+template <class ByteIO, class Struct>
 bool storeStruct(ByteIO* io, uint64_t pos, const Struct& st) {
     uint8_t buffer[Struct::SIZE];
 

@@ -62,4 +62,5 @@ int main() {
     MyByteIO bio(getFile("new.repo"));
     bleb::Repository repo(&bio, true);
     repo.open();
+    repo.setObjectContents1("helloWorld", "Hello, World!");
 }
