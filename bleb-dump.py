@@ -23,10 +23,13 @@ class RepositoryStream:
 	def eof(self):
 		return self.pos >= len(self.data)
 
-	def read(self, length):
-		data = self.data[self.pos:self.pos + length]
-		self.pos += length
-		return data
+	def read(self, length=None):
+		if length != None:
+			data = self.data[self.pos:self.pos + length]
+			self.pos += length
+			return data
+		else:
+			return self.data
 
 	def seek(self, amount, whence):
 		if whence == 0:
@@ -42,9 +45,6 @@ with open(inputFilename, 'rb') as input:
 			abort()
 
 		print('Format version: %02Xh' % prologue[1])
-
-	def readStreamDescriptor():
-		return unpackStruct(StreamDescriptor_t, input)
 
 	def getStreamContents(descr):
 		location = descr[0]
@@ -67,7 +67,7 @@ with open(inputFilename, 'rb') as input:
 		return RepositoryStream(data)
 
 	def printObjectEntryPrologueHeader(hdr):
-		print('[length=%u, flags=%04X, nameLength=%u]' % hdr, end='')
+		print('[length=%u, flags=%04X, nameLength=%u]' % (hdr[0] & 0x7fff, hdr[1], hdr[2]), end='')
 
 	def printStreamDescriptor(descr):
 		print('[location=%u, length=%u]' % descr, end='')
@@ -81,8 +81,16 @@ with open(inputFilename, 'rb') as input:
 
 		while not dir.eof():
 			prologueHeader = unpackStruct(ObjectEntryPrologueHeader_t, dir)
-			print('  Object', end='\t')
-			printObjectEntryPrologueHeader(prologueHeader)
+
+			if (prologueHeader[0] & 0x8000) == 0:
+				print('  Object', end='\t')
+				printObjectEntryPrologueHeader(prologueHeader)
+			else:
+				print('  Deleted\t[length=%u]' % (prologueHeader[0] & 0x7fff))
+
+				dir.seek(align(prologueHeader[0] & 0x7fff, 16) - ObjectEntryPrologueHeader_t.size, 1)
+				continue
+
 			name = dir.read(prologueHeader[2]).decode()
 			print('\t`%s`' % name)
 
@@ -93,15 +101,23 @@ with open(inputFilename, 'rb') as input:
 			HAS_INLINE_PAYLOAD = 0x0010
 			IS_TEXT = 0x1001
 
-			if (prologueHeader[1] & HAS_INLINE_PAYLOAD):
+			if prologueHeader[1] & HAS_STREAM_DESCR:
+				streamDescr = unpackStruct(StreamDescriptor_t, dir)
+				print('    Stream Descriptor', end='\t')
+				printStreamDescriptor(streamDescr)
+				print()
+
+				#print(getStreamContents(streamDescr).read().decode('utf-8'))
+
+			if prologueHeader[1] & HAS_INLINE_PAYLOAD:
 				contents = dir.read(prologueHeader[0] - ObjectEntryPrologueHeader_t.size - prologueHeader[2]).decode()
-				print("    Inline Payload:\t" + contents)
+				print('    Inline Payload:\t' + contents)
 
 			padding = align(prologueHeader[0], 16) - prologueHeader[0]
 			dir.seek(padding, 1)
 
 	readHeader()
-	cdsDescr = readStreamDescriptor()
+	cdsDescr = unpackStruct(StreamDescriptor_t, input)
 
 	dumpContentDirectory(cdsDescr)
 

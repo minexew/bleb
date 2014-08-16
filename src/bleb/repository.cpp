@@ -6,11 +6,15 @@
 
 namespace bleb {
 
-template <typename T> T min(T a, T b) {
+template <typename T> static T min(T a, T b) {
     return (a < b) ? a : b;
 }
 
-template <typename T> T roundUpBlockLength(T length) {
+template <typename T> static T max(T a, T b) {
+    return (a > b) ? a : b;
+}
+
+template <typename T> static T roundUpBlockLength(T length) {
     T roundUpTo;
 
     // 0-255:       round to 32
@@ -30,12 +34,13 @@ template <typename T> T roundUpBlockLength(T length) {
     return align(length, roundUpTo);
 }
 
-class RepositoryStream /*: IOStream*/ {
+class RepositoryStream : public ByteIO {
     Repository* repo;
     ByteIO* io;
     bool isReadOnly = false;
 
-    uint64_t descrLocation;
+    ByteIO* descrIO;
+    uint64_t descrPos;
     StreamDescriptor_t descr;
     bool descrDirty;
 
@@ -43,18 +48,21 @@ class RepositoryStream /*: IOStream*/ {
 
     bool haveCurrentSpan;
     SpanHeader_t firstSpan, currentSpan;
-    uint64_t currentSpanLocation, currentSpanPosInStream, posInCurrentSpan;
+    uint64_t currentSpanLocation, currentSpanPosInStream;
+    uint32_t posInCurrentSpan;
 
 public:
-    RepositoryStream(Repository* repo, uint64_t streamDescriptorLocation) {
+    RepositoryStream(Repository* repo, ByteIO* streamDescrIO, uint64_t streamDescrPos) {
         this->repo = repo;
         this->io = repo->io;
-        this->descrLocation = streamDescriptorLocation;
+        this->descrIO = streamDescrIO;
+        this->descrPos = streamDescrPos;
 
         descrDirty = false;
+        pos = 0;
         haveCurrentSpan = false;
 
-        retrieveStruct(io, descrLocation, descr);
+        retrieveStruct(descrIO, descrPos, descr);
 
         if (descr.location != 0) {
             retrieveStruct(io, descr.location, firstSpan);
@@ -62,13 +70,15 @@ public:
         }
     }
 
-    RepositoryStream(Repository* repo, uint64_t streamDescriptorLocation, uint32_t reserveLength,
-            uint64_t expectedSize) {
+    RepositoryStream(Repository* repo, ByteIO* streamDescrIO, uint64_t streamDescrPos,
+            uint32_t reserveLength, uint64_t expectedSize) {
         this->repo = repo;
         this->io = repo->io;
-        this->descrLocation = streamDescriptorLocation;
+        this->descrIO = streamDescrIO;
+        this->descrPos = streamDescrPos;
 
         descrDirty = false;
+        pos = 0;
         haveCurrentSpan = false;
 
         // create a new stream
@@ -83,17 +93,35 @@ public:
         setCurrentSpan(firstSpan, firstSpanLocation, 0);
     }
 
-    ~RepositoryStream() {
+    virtual ~RepositoryStream() {
         if (descrDirty)
-            storeStruct(io, descrLocation, descr);
+            storeStruct(descrIO, descrPos, descr);
+    }
+
+    virtual uint64_t getSize() override {
+        return descr.length;
+    }
+
+    virtual bool getBytesAt(uint64_t pos, uint8_t* buffer, uint64_t count) override {
+        return setPos(pos), read(buffer, count) == count;
+    }
+
+    virtual bool setBytesAt(uint64_t pos, const uint8_t* buffer, uint64_t count) override {
+        return setPos(pos), write(buffer, count) == count;
+    }
+
+    virtual bool clearBytesAt(uint64_t pos, uint64_t count) override {
+        setPos(pos);
+
+        while (count--)
+            if (!write("\x00", 1))
+                return false;
+
+        return true;
     }
 
     uint64_t getPos() {
         return pos;
-    }
-
-    uint64_t getSize() {
-        return descr.length;
     }
 
     void setPos(uint64_t pos) {
@@ -111,7 +139,7 @@ public:
         size_t readTotal = 0;
 
         if (!haveCurrentSpan) {
-            printf("goto right for read\n");
+            fprintf(stderr, "goto right for read\n");
             if (!gotoRightSpan())
                 return readTotal;
         }
@@ -120,7 +148,7 @@ public:
             // start by checking whether we currently are within any span
 
             const uint64_t remainingBytesInSpan = currentSpan.usedLength - posInCurrentSpan;
-printf("%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posInCurrentSpan);
+            //fprintf(stderr, "%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posInCurrentSpan);
             if (remainingBytesInSpan > 0) {
                 const size_t read = min<uint64_t>(remainingBytesInSpan, length);
 
@@ -178,7 +206,7 @@ printf("%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posIn
                 descrDirty = true;
             }
             else {
-                printf("goto right for write\n");
+                fprintf(stderr, "goto right for write\n");
                 // seek; will fail if pos > length
                 if (!gotoRightSpan())
                     return writtenTotal;    // FIXME: errors
@@ -211,7 +239,7 @@ printf("%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posIn
                 buffer += written;
                 length -= written;
 
-                currentSpan.usedLength = posInCurrentSpan;
+                currentSpan.usedLength = max(currentSpan.usedLength, posInCurrentSpan);
 
                 if (!storeStruct(io, currentSpanLocation, currentSpan))
                     return writtenTotal;
@@ -258,7 +286,6 @@ printf("%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posIn
     }
 
 private:
-
     bool gotoRightSpan() {
         // FIXME: this is highly unoptimal right now (and possibly broken)
         // we're always starting from the block beginning and going span-by-span
@@ -307,39 +334,194 @@ private:
     }
 };
 
-inline bool getBytesAt(RepositoryStream* io, uint64_t pos, uint8_t* buffer, uint64_t count) {
-    return io->setPos(pos), io->read(buffer, count) == count;
-}
-
-inline bool setBytesAt(RepositoryStream* io, uint64_t pos, const uint8_t* buffer, uint64_t count) {
-    return io->setPos(pos), io->write(buffer, count) == count;
-}
-
-inline bool clearBytesAt(RepositoryStream* io, uint64_t pos, uint64_t count) {
-    io->setPos(pos);
-
-    while (count--)
-        if (!io->write("\x00", 1))
-            return false;
-
-    return true;
-}
-
 class RepositoryDirectory {
+    Repository* repo;
     RepositoryStream* directoryStream;
 
-    // create a new directory, storing its descriptor at the specified location
-    /*this(Repository repo, uint64_t streamDescriptorLocation, uint64_t expectedSize) {
-        directoryStream = new RepositoryStream(repo, streamDescriptorLocation);
-    }*/
-
 public:
-    RepositoryDirectory(RepositoryStream* directoryStream) {
+    RepositoryDirectory(Repository* repo, RepositoryStream* directoryStream) {
+        this->repo = repo;
         this->directoryStream = directoryStream;
     }
 
     ~RepositoryDirectory() {
         delete directoryStream;
+    }
+
+    void getObjectContents1(const char* objectName, uint8_t*& contents_out, size_t& length_out) {
+        // FIXME: error handling
+
+        const size_t objectNameLength = strlen(objectName);
+
+        // search for object
+        directoryStream->setPos(0);
+
+        uint64_t pos = 0;
+
+        while (pos < directoryStream->getSize()) {
+            ObjectEntryPrologueHeader_t prologueHeader;
+
+            if (!retrieveStruct(directoryStream, pos, prologueHeader)) {
+                return;
+            }
+
+            const uint16_t paddedEntryLength = align(prologueHeader.length & ObjectEntryPrologueHeader_t::LENGTH_MASK, 16);
+
+            if (prologueHeader.length & ObjectEntryPrologueHeader_t::IS_INVALIDATED) {
+                // entry is invalidated, might be a candidate for overwriting
+            }
+            else {
+                size_t offset = ObjectEntryPrologueHeader_t::SIZE;
+
+                if (prologueHeader.nameLength == objectNameLength) {
+                    // compare entry names
+
+                    uint8_t* name = (uint8_t*) alloca(prologueHeader.nameLength);
+
+                    if (!getBytesAt(directoryStream, pos + offset, name, prologueHeader.nameLength))
+                        return;
+
+                    offset += prologueHeader.nameLength;
+
+                    if (memcmp(name, objectName, prologueHeader.nameLength) == 0) {
+                        // match, retrieve object
+
+                        if (prologueHeader.flags & ObjectEntryPrologueHeader_t::HAS_INLINE_PAYLOAD) {
+                            // FIXME: offset might be incorrect
+                            length_out = prologueHeader.length - offset;
+                            contents_out = (uint8_t*) malloc(length_out);
+
+                            if (!getBytesAt(directoryStream, pos + offset, contents_out, length_out))
+                                return;
+
+                            return;
+                        }
+                        else {
+                            // FIXME: offset might be incorrect
+                            RepositoryStream stream(repo, directoryStream, pos + offset);
+
+                            length_out = stream.getSize();
+                            contents_out = (uint8_t*) malloc(length_out);
+
+                            stream.read(contents_out, length_out);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            pos += paddedEntryLength;
+        }
+
+        contents_out = nullptr;
+        length_out = 0;
+    }
+
+    void setObjectEntry(const char* objectName, const uint8_t* objectEntryBytes, size_t objectEntryLength, size_t& objectEntryPos_out) {
+        const size_t objectNameLength = strlen(objectName);
+        const uint16_t paddedObjectEntryLength = align(objectEntryLength, 16);
+
+        directoryStream->setPos(0);
+
+        uint64_t pos = 0;
+
+        //fprintf(stderr, "entering loop\n");
+
+        while (pos < directoryStream->getSize()) {
+            //fprintf(stderr, "testing at %llu\n", pos);
+            ObjectEntryPrologueHeader_t prologueHeader;
+
+            size_t offset = 0;
+
+            if (!retrieveStruct(directoryStream, pos + offset, prologueHeader)) {
+                return;
+            }
+
+            offset += ObjectEntryPrologueHeader_t::SIZE;
+
+            assert((prologueHeader.length & ObjectEntryPrologueHeader_t::LENGTH_MASK) >= 6); // FIXME: not assert
+            const uint16_t paddedEntryLength = align(prologueHeader.length & ObjectEntryPrologueHeader_t::LENGTH_MASK, 16);
+
+            if (prologueHeader.length & ObjectEntryPrologueHeader_t::IS_INVALIDATED) {
+                // entry is invalidated, might be a candidate for overwriting
+            }
+            else {
+                if (prologueHeader.nameLength == objectNameLength) {
+                    // compare entry names
+
+                    uint8_t* name = (uint8_t*) alloca(prologueHeader.nameLength);
+
+                    if (!getBytesAt(directoryStream, pos + offset, name, prologueHeader.nameLength))
+                        return;
+
+                    offset += prologueHeader.nameLength;
+
+                    if (memcmp(name, objectName, prologueHeader.nameLength) == 0) {
+                        //fprintf(stderr, "match, original %u, new %u\n", paddedEntryLength, paddedObjectEntryLength);
+
+                        // FIXME: the way we overwrite things here is obviously completely broken
+
+                        if (paddedEntryLength >= paddedObjectEntryLength) {
+                            // overwriting larger entry
+
+                            offset = 0;
+
+                            if (!setBytesAt(directoryStream, pos + offset, objectEntryBytes, objectEntryLength))
+                                return;
+
+                            offset += objectEntryLength;
+
+                            // padding
+                            if (!clearBytesAt(directoryStream, pos + offset, paddedObjectEntryLength - objectEntryLength))
+                                return;
+
+                            offset += paddedObjectEntryLength - objectEntryLength;
+
+                            if (paddedObjectEntryLength < paddedEntryLength) {
+                                ObjectEntryPrologueHeader_t invalidated;
+                                invalidated.length = (paddedEntryLength - paddedObjectEntryLength) | ObjectEntryPrologueHeader_t::IS_INVALIDATED;
+                                invalidated.flags = 0;
+                                invalidated.nameLength = 0;
+
+                                //fprintf(stderr, "reclaimed %u-byte entry @ %llu\n", (paddedEntryLength - paddedObjectEntryLength), pos);
+                                if (!storeStruct(directoryStream, pos + offset, invalidated))
+                                    return;
+                            }
+
+                            objectEntryPos_out = pos;
+                            return;
+                        }
+                        else {
+                            offset = 0;
+
+                            prologueHeader.length |= ObjectEntryPrologueHeader_t::IS_INVALIDATED;
+
+                            //fprintf(stderr, "invalidated %u-byte entry @ %llu\n", paddedEntryLength, pos);
+                            if (!storeStruct(directoryStream, pos + offset, prologueHeader))
+                                return;
+
+                            pos = directoryStream->getSize();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            pos += paddedEntryLength;
+        }
+
+        objectEntryPos_out = pos;
+        //fprintf(stderr, "new object at %llu\n", pos);
+
+        // no match found; create new entry
+        if (!setBytesAt(directoryStream, pos, objectEntryBytes, objectEntryLength))
+            return;
+
+        pos += objectEntryLength;
+
+        // padding
+        if (!clearBytesAt(directoryStream, pos, paddedObjectEntryLength - objectEntryLength))
+            return;
     }
 
     void setObjectContents1(const char* objectName, const uint8_t* contents, size_t contentsLength,
@@ -369,8 +551,6 @@ public:
             objectEntryLength = prologueLength + contentsLength;
         }
 
-        const uint16_t paddedObjectEntryLength = align(objectEntryLength, 16);
-
         ObjectEntryPrologueHeader_t objectPrologueHeader;
         objectPrologueHeader.length = objectEntryLength;
         objectPrologueHeader.flags = objectFlags;
@@ -379,68 +559,70 @@ public:
         StreamDescriptor_t streamDescr;
         streamDescr.location = 0;
         streamDescr.length = 0;
-        assert(useInlinePayload);
 
-        directoryStream->setPos(0);
+        // build entry bytes
+        uint8_t* entryBytes = repo->getEntryBuffer(objectEntryLength);
+        size_t pos = 0;
 
-        uint64_t pos = 0;
-
-        while (pos < directoryStream->getSize()) {
-            ObjectEntryPrologueHeader_t prologueHeader;
-
-            if (!retrieveStruct(directoryStream, pos, prologueHeader)) {
-                return;
-            }
-
-            const uint16_t paddedEntryLength = align(prologueHeader.length & ObjectEntryPrologueHeader_t::LENGTH_MASK, 16);
-
-            if (prologueHeader.length & ObjectEntryPrologueHeader_t::IS_INVALIDATED) {
-                // entry is invalidated, might be a candidate for overwriting
-            }
-            else {
-                if (prologueHeader.nameLength == objectNameLength) {
-                    // compare entry names
-
-                }
-            }
-
-            pos += paddedEntryLength;
-        }
-
-        // no match found; create new entry
-        if (!storeStruct(directoryStream, pos, objectPrologueHeader))
+        if (!storeStruct(entryBytes, pos, objectPrologueHeader))
             return;
 
         pos += ObjectEntryPrologueHeader_t::SIZE;
 
-        if (!setBytesAt(directoryStream, pos, (const uint8_t*) objectName, objectNameLength))
+        if (!setBytesAt(entryBytes, pos, (const uint8_t*) objectName, objectNameLength))
             return;
 
         pos += objectNameLength;
 
-        if (useInlinePayload) {
-            if (!setBytesAt(directoryStream, pos, contents, contentsLength))
+        size_t streamDescrOffset;
+
+        if (!useInlinePayload) {
+            streamDescrOffset = pos;
+
+            if (!storeStruct(entryBytes, pos, streamDescr))
+                return;
+
+            pos += StreamDescriptor_t::SIZE;
+        }
+        else {
+            if (!setBytesAt(entryBytes, pos, contents, contentsLength))
                 return;
 
             pos += contentsLength;
-
-            // padding
-            if (!clearBytesAt(directoryStream, pos, paddedObjectEntryLength - objectEntryLength))
-                return;
         }
-        else
-            assert(false);
+
+        size_t objectEntryPos;
+
+        // store in directory
+        setObjectEntry(objectName, entryBytes, objectEntryLength, objectEntryPos);
+
+        if (!useInlinePayload) {
+            RepositoryStream stream(repo, directoryStream, objectEntryPos + streamDescrOffset, contentsLength, contentsLength);
+            stream.write(contents, contentsLength);
+
+            // FIXME: need to make sure entry will be already written at this point
+            // (it would overwrite streamDescr otherwise)
+        }
     }
 };
 
-Repository::Repository(ByteIO* bio, bool canCreateNew) {
-    this->io = bio;
+Repository::Repository(ByteIO* io, bool canCreateNew, bool deleteIO) {
+    this->io = io;
+    this->deleteIO = deleteIO;
 
     this->canCreateNew = canCreateNew;
+
+    this->entryBuffer = nullptr;
+    this->entryBufferSize = 0;
 }
 
 Repository::~Repository() {
     close();
+
+    free(entryBuffer);
+
+    if (deleteIO)
+        delete io;
 }
 
 bool Repository::open() {
@@ -449,7 +631,7 @@ bool Repository::open() {
     const unsigned int cdsDescrLocation = RepositoryPrologue_t::SIZE;
 
     if (io->getSize() == 0) {
-        diagnostic("repo:\tRepository file is empty; must create new");
+        //diagnostic("repo:\tRepository file is empty; must create new");
 
         // Must create new
         if (!canCreateNew)
@@ -465,11 +647,11 @@ bool Repository::open() {
         // create Content Directory
         // cds = Contend Directory Stream
 
-        auto cds = new RepositoryStream(this, cdsDescrLocation,
+        auto cds = new RepositoryStream(this, io, cdsDescrLocation,
                 contentDirectoryReserveLength,
                 contentDirectoryExpectedSize);
 
-        contentDirectory = new RepositoryDirectory(cds);
+        contentDirectory = new RepositoryDirectory(this, cds);
     }
     else {
         if (!retrieveStruct(io, 0, prologue))
@@ -481,7 +663,10 @@ bool Repository::open() {
         if (prologue.formatVersion > 1)
             return error("version not recognized"), false;
 
-        diagnostic("repo:\tHeader: format version %d", prologue.formatVersion);
+        //diagnostic("repo:\tHeader: format version %d", prologue.formatVersion);
+
+        auto cds = new RepositoryStream(this, io, cdsDescrLocation);
+        contentDirectory = new RepositoryDirectory(this, cds);
     }
 
     isOpen = true;
@@ -490,7 +675,7 @@ bool Repository::open() {
 
 void Repository::close() {
     if (isOpen) {
-        diagnostic("repo:\tClosing Content Directory");
+        //diagnostic("repo:\tClosing Content Directory");
         delete contentDirectory;
 
         isOpen = false;
@@ -525,8 +710,23 @@ bool Repository::allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, 
     return true;
 }
 
+uint8_t* Repository::getEntryBuffer(size_t size) {
+    if (size > entryBufferSize)
+        entryBuffer = (uint8_t*) realloc(entryBuffer, align(size, 32));
+
+    return entryBuffer;
+}
+
+void Repository::getObjectContents1(const char* objectName, uint8_t*& contents_out, size_t& length_out) {
+    contentDirectory->getObjectContents1(objectName, contents_out, length_out);
+}
+
 void Repository::setObjectContents1(const char* objectName, const char* contents) {
-    contentDirectory->setObjectContents1(objectName, (const uint8_t*) contents, strlen(contents),
+    setObjectContents1(objectName, contents, strlen(contents));
+}
+
+void Repository::setObjectContents1(const char* objectName, const void* contents, size_t length) {
+    contentDirectory->setObjectContents1(objectName, (const uint8_t*) contents, length,
             PREFER_INLINE_PAYLOAD, ObjectEntryPrologueHeader_t::IS_TEXT);
 }
 }

@@ -5,7 +5,7 @@
 >In medicine, a bleb is a large blister (usually approximately hemispherical) filled with serous fluid.
 >&mdash; Wikipedia
 
-(not to be confused with [similarly sounding words](http://www.urbandictionary.com/define.php?term=pleb))
+(not to be confused with any [similarly sounding words](http://www.urbandictionary.com/define.php?term=pleb))
 
 ## Goals
 

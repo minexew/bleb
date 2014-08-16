@@ -1,3 +1,10 @@
+Header Location In File
+    either 0 or 2^n for n >= 8
+        e.g. 0, 256, 512, 1024, 2k, 4k ...
+
+    This allows gluing a Bleb to another file, making such file dual-format.
+    It might even be possible (if useless) to pack multiple Repositories with different format versions in a single file.
+
 Header
     char magic[7] = 0x89 'bleb' 0x0D 0x0A
     uint8_t formatVersion = 0x01

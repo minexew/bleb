@@ -1,16 +1,30 @@
+#pragma once
+
 #include <bleb/byteio.hpp>
-#include <bleb/repository.hpp>
 
 #include <cassert>
+#include <cstdio>
 
-static uint64_t bioReadBytes = 0,
-    bioReadOps = 0,
-    bioWrittenBytes = 0,
-    bioWrittenOps = 0;
+// FIXME: replace assert
 
-class MyByteIO : public bleb::ByteIO {
+namespace bleb {
+class StdioFileByteIO : public ByteIO {
 public:
-    MyByteIO(FILE* file) : file(file) {}
+	static FILE* getFile(const char* path, bool canCreateNew) {
+	    FILE* f = fopen(path, "rb+");
+
+	    if (f == nullptr && canCreateNew)
+	        f = fopen(path, "wb+");
+
+	    return f;
+	}
+
+    StdioFileByteIO(FILE* file, bool close) : file(file), close(close) {}
+
+ 	~StdioFileByteIO() {
+ 		if (close)
+ 			fclose(file);
+ 	}
 
     virtual uint64_t getSize() override {
         fseek(file, 0, SEEK_END);
@@ -47,20 +61,6 @@ public:
     }
 
     FILE* file;
+    bool close;
 };
-
-FILE* getFile(const char* path) {
-    FILE* f = fopen(path, "rb+");
-
-    if (f == nullptr)
-        f = fopen(path, "wb+");
-
-    return f;
-}
-
-int main() {
-    MyByteIO bio(getFile("new.repo"));
-    bleb::Repository repo(&bio, true);
-    repo.open();
-    repo.setObjectContents1("helloWorld", "Hello, World!");
 }
