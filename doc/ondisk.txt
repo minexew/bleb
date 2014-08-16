@@ -6,8 +6,11 @@ Header Location In File
     It might even be possible (if useless) to pack multiple Repositories with different format versions in a single file.
 
 Header
+    (Prologue)
     char magic[7] = 0x89 'bleb' 0x0D 0x0A
     uint8_t formatVersion = 0x01
+    uint32_t flags
+    uint32_t infoFlags
 
     (Content Directory Stream Descriptor)
     uint64_t location   (offset in file)

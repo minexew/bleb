@@ -5,7 +5,7 @@ import struct, sys
 inputFilename = sys.argv[1]
 
 ObjectEntryPrologueHeader_t = struct.Struct('<HHH')
-RepositoryPrologue_t = struct.Struct('<7sB')
+RepositoryPrologue_t = struct.Struct('<7sBII')
 SpanHeader_t = struct.Struct('<IIQ')
 StreamDescriptor_t = struct.Struct('<QQ')
 
@@ -45,6 +45,7 @@ with open(inputFilename, 'rb') as input:
 			abort()
 
 		print('Format version: %02Xh' % prologue[1])
+		print('Flags: core=%08Xh info=%08Xh' % (prologue[2], prologue[3]))
 
 	def getStreamContents(descr):
 		location = descr[0]

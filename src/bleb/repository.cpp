@@ -639,6 +639,8 @@ bool Repository::open() {
 
         memcpy(prologue.magic, prologueMagic, sizeof(prologueMagic));
         prologue.formatVersion = 1;
+        prologue.flags = 0;
+        prologue.infoFlags = 0;
 
         if (!storeStruct(io, 0, prologue)
             || !clearBytesAt(io, RepositoryPrologue_t::SIZE, StreamDescriptor_t::SIZE))
@@ -660,7 +662,7 @@ bool Repository::open() {
         if (memcmp(prologue.magic, prologueMagic, sizeof(prologueMagic)) != 0)
             return error("magic doesn't match"), false;
 
-        if (prologue.formatVersion > 1)
+        if (prologue.formatVersion > 1 || (prologue.flags & ~(0)) != 0)
             return error("version not recognized"), false;
 
         //diagnostic("repo:\tHeader: format version %d", prologue.formatVersion);

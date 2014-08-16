@@ -9,11 +9,13 @@ namespace bleb {
 static const uint8_t prologueMagic[7] = {0x89, 'b', 'l', 'e', 'b', '\r', '\n'};
 
 struct RepositoryPrologue_t {
-    enum { SIZE = 8 };
-    enum { FORMAT_VERSION_1 = 1 };
+    enum { SIZE = 16 };
+    enum { FORMAT_VERSION_1 = 0x01 };
 
     uint8_t magic[7];
     uint8_t formatVersion;
+    uint32_t flags;
+    uint32_t infoFlags;
 };
 
 struct StreamDescriptor_t {
@@ -83,6 +85,8 @@ static void deserialize(RepositoryPrologue_t& s, const uint8_t* buffer) {
     buffer += sizeof(s.magic);
 
     deserializeLE(s.formatVersion, buffer);
+    deserializeLE(s.flags, buffer);
+    deserializeLE(s.infoFlags, buffer);
 }
 
 static void serialize(const RepositoryPrologue_t& s, uint8_t* buffer) {
@@ -90,6 +94,8 @@ static void serialize(const RepositoryPrologue_t& s, uint8_t* buffer) {
     buffer += sizeof(s.magic);
 
     serializeLE(s.formatVersion, buffer);
+    serializeLE(s.flags, buffer);
+    serializeLE(s.infoFlags, buffer);
 }
 
 static void deserialize(StreamDescriptor_t& s, const uint8_t* buffer) {

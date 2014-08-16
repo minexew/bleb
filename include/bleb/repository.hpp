@@ -29,7 +29,7 @@ public:
 
 private:
     bool allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, uint64_t dataLength);
-    void error(const char* what) { fprintf(stderr, "%s", what); exit(EXIT_FAILURE); }
+    void error(const char* what) { fprintf(stderr, "%s\n", what); exit(EXIT_FAILURE); }
 
     uint8_t* getEntryBuffer(size_t size);
 
