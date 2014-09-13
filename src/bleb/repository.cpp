@@ -4,6 +4,10 @@
 #include "internal.hpp"
 #include "on_disk_structures.hpp"
 
+#ifdef _MSC_VER
+#include <malloc.h>
+#endif
+
 namespace bleb {
 
 template <typename T> static T min(T a, T b) {
@@ -102,11 +106,11 @@ public:
         return descr.length;
     }
 
-    virtual bool getBytesAt(uint64_t pos, uint8_t* buffer, uint64_t count) override {
+    virtual bool getBytesAt(uint64_t pos, uint8_t* buffer, size_t count) override {
         return setPos(pos), read(buffer, count) == count;
     }
 
-    virtual bool setBytesAt(uint64_t pos, const uint8_t* buffer, uint64_t count) override {
+    virtual bool setBytesAt(uint64_t pos, const uint8_t* buffer, size_t count) override {
         return setPos(pos), write(buffer, count) == count;
     }
 
@@ -150,7 +154,7 @@ public:
             const uint64_t remainingBytesInSpan = currentSpan.usedLength - posInCurrentSpan;
             //fprintf(stderr, "%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posInCurrentSpan);
             if (remainingBytesInSpan > 0) {
-                const size_t read = min<uint64_t>(remainingBytesInSpan, length);
+                const size_t read = (size_t) min<uint64_t>(remainingBytesInSpan, length);
 
                 if (!io->getBytesAt(currentSpanLocation + SpanHeader_t::SIZE + posInCurrentSpan, buffer, read))
                     return false;
@@ -219,7 +223,7 @@ public:
             const uint64_t remainingBytesInSpan = currentSpan.reservedLength - posInCurrentSpan;
 
             if (remainingBytesInSpan > 0) {
-                const size_t written = min<uint64_t>(remainingBytesInSpan, length);
+                const size_t written = (size_t) min<uint64_t>(remainingBytesInSpan, length);
 
                 if (!io->setBytesAt(currentSpanLocation + SpanHeader_t::SIZE + posInCurrentSpan, buffer, written))
                     return false;
@@ -305,7 +309,7 @@ private:
 
             // is the 'pos' we're looking for within this span?
             if (pos <= currentSpanPosInStream + currentSpan.reservedLength) {
-                posInCurrentSpan = pos - currentSpanPosInStream;
+                posInCurrentSpan = (uint32_t)(pos - currentSpanPosInStream);
                 break;
             }
 
@@ -365,9 +369,9 @@ public:
                 return;
             }
 
-            const uint16_t paddedEntryLength = align(prologueHeader.length & ObjectEntryPrologueHeader_t::LENGTH_MASK, 16);
+            const uint16_t paddedEntryLength = align(prologueHeader.length & ObjectEntryPrologueHeader_t::kLengthMask, 16);
 
-            if (prologueHeader.length & ObjectEntryPrologueHeader_t::IS_INVALIDATED) {
+            if (prologueHeader.length & ObjectEntryPrologueHeader_t::kIsInvalidated) {
                 // entry is invalidated, might be a candidate for overwriting
             }
             else {
@@ -386,7 +390,7 @@ public:
                     if (memcmp(name, objectName, prologueHeader.nameLength) == 0) {
                         // match, retrieve object
 
-                        if (prologueHeader.flags & ObjectEntryPrologueHeader_t::HAS_INLINE_PAYLOAD) {
+                        if (prologueHeader.flags & ObjectEntryPrologueHeader_t::kHasInlinePayload) {
                             // FIXME: offset might be incorrect
                             length_out = prologueHeader.length - offset;
                             contents_out = (uint8_t*) malloc(length_out);
@@ -400,7 +404,9 @@ public:
                             // FIXME: offset might be incorrect
                             RepositoryStream stream(repo, directoryStream, pos + offset);
 
-                            length_out = stream.getSize();
+                            // TODO: check if stream.getSize() < size_t::MAX
+
+                            length_out = (size_t) stream.getSize();
                             contents_out = (uint8_t*) malloc(length_out);
 
                             stream.read(contents_out, length_out);
@@ -439,10 +445,10 @@ public:
 
             offset += ObjectEntryPrologueHeader_t::SIZE;
 
-            assert((prologueHeader.length & ObjectEntryPrologueHeader_t::LENGTH_MASK) >= 6); // FIXME: not assert
-            const uint16_t paddedEntryLength = align(prologueHeader.length & ObjectEntryPrologueHeader_t::LENGTH_MASK, 16);
+            assert((prologueHeader.length & ObjectEntryPrologueHeader_t::kLengthMask) >= 6); // FIXME: not assert
+            const uint16_t paddedEntryLength = align(prologueHeader.length & ObjectEntryPrologueHeader_t::kLengthMask, 16);
 
-            if (prologueHeader.length & ObjectEntryPrologueHeader_t::IS_INVALIDATED) {
+            if (prologueHeader.length & ObjectEntryPrologueHeader_t::kIsInvalidated) {
                 // entry is invalidated, might be a candidate for overwriting
             }
             else {
@@ -472,14 +478,16 @@ public:
                             offset += objectEntryLength;
 
                             // padding
-                            if (!clearBytesAt(directoryStream, pos + offset, paddedObjectEntryLength - objectEntryLength))
+                            if (!clearBytesAt(directoryStream, pos + offset, paddedObjectEntryLength
+                                    - objectEntryLength))
                                 return;
 
                             offset += paddedObjectEntryLength - objectEntryLength;
 
                             if (paddedObjectEntryLength < paddedEntryLength) {
                                 ObjectEntryPrologueHeader_t invalidated;
-                                invalidated.length = (paddedEntryLength - paddedObjectEntryLength) | ObjectEntryPrologueHeader_t::IS_INVALIDATED;
+                                invalidated.length = (paddedEntryLength - paddedObjectEntryLength)
+                                        | ObjectEntryPrologueHeader_t::kIsInvalidated;
                                 invalidated.flags = 0;
                                 invalidated.nameLength = 0;
 
@@ -494,7 +502,7 @@ public:
                         else {
                             offset = 0;
 
-                            prologueHeader.length |= ObjectEntryPrologueHeader_t::IS_INVALIDATED;
+                            prologueHeader.length |= ObjectEntryPrologueHeader_t::kIsInvalidated;
 
                             //fprintf(stderr, "invalidated %u-byte entry @ %llu\n", paddedEntryLength, pos);
                             if (!storeStruct(directoryStream, pos + offset, prologueHeader))
@@ -535,19 +543,19 @@ public:
 
         bool useInlinePayload = false;
 
-        if (flags & PREFER_INLINE_PAYLOAD) {
-            if (prologueLength + contentsLength < ObjectEntryPrologueHeader_t::LENGTH_MASK)
+        if (flags & kPreferInlinePayload) {
+            if (prologueLength + contentsLength < ObjectEntryPrologueHeader_t::kLengthMask)
                 useInlinePayload = true;
         }
 
         uint16_t objectEntryLength;
 
         if (!useInlinePayload) {
-            objectFlags |= ObjectEntryPrologueHeader_t::HAS_STREAM_DESCR;
+            objectFlags |= ObjectEntryPrologueHeader_t::kHasStreamDescr;
             objectEntryLength = prologueLength + StreamDescriptor_t::SIZE;
         }
         else {
-            objectFlags |= ObjectEntryPrologueHeader_t::HAS_INLINE_PAYLOAD;
+            objectFlags |= ObjectEntryPrologueHeader_t::kHasInlinePayload;
             objectEntryLength = prologueLength + contentsLength;
         }
 
@@ -606,11 +614,9 @@ public:
     }
 };
 
-Repository::Repository(ByteIO* io, bool canCreateNew, bool deleteIO) {
+Repository::Repository(ByteIO* io, bool deleteIO) {
     this->io = io;
     this->deleteIO = deleteIO;
-
-    this->canCreateNew = canCreateNew;
 
     this->entryBuffer = nullptr;
     this->entryBufferSize = 0;
@@ -625,7 +631,7 @@ Repository::~Repository() {
         delete io;
 }
 
-bool Repository::open() {
+bool Repository::open(bool canCreateNew) {
     RepositoryPrologue_t prologue;
 
     const unsigned int cdsDescrLocation = RepositoryPrologue_t::SIZE;
@@ -694,6 +700,8 @@ bool Repository::allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, 
     diagnostic("allocating %u-byte span @ %u (end at %u)", (unsigned) dataLength, (unsigned) pos,
             (unsigned) (pos + StreamDescriptor_t::SIZE + dataLength));
 
+    // FIXME: ensure dataLength fits in header.reservedLength
+
     // initialize span
     SpanHeader_t header;
     header.reservedLength = dataLength;
@@ -729,6 +737,6 @@ void Repository::setObjectContents1(const char* objectName, const char* contents
 
 void Repository::setObjectContents1(const char* objectName, const void* contents, size_t length) {
     contentDirectory->setObjectContents1(objectName, (const uint8_t*) contents, length,
-            PREFER_INLINE_PAYLOAD, ObjectEntryPrologueHeader_t::IS_TEXT);
+            kPreferInlinePayload, ObjectEntryPrologueHeader_t::kIsText);
 }
 }

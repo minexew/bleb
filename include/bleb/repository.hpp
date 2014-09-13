@@ -6,23 +6,24 @@
 namespace bleb {
 
 struct SpanHeader_t;
+class ByteIO;
 class RepositoryDirectory;
 
 enum {
-    PREFER_INLINE_PAYLOAD = 1,
+    kPreferInlinePayload = 1,
     //REQUIRE_INLINE_PAYLOAD = 2,
 };
 
 class Repository {
 public:
-    //enum { STREAM_CREATE = 1, STREAM_TRUNCATE = 2 };
+    //enum { kStreamCreate = 1, kStreamTruncate = 2 };
 
-    Repository(ByteIO* io, bool canCreateNew, bool deleteIO);
+    Repository(ByteIO* io, bool deleteIO);
     ~Repository();
-    bool open();
+    bool open(bool canCreateNew);
     void close();
 
-    //void openStream1(const char* objectName, int creationFlags);
+    //ByteIO* openStream1(const char* objectName, int creationFlags);
     void getObjectContents1(const char* objectName, uint8_t*& contents_out, size_t& length_out);
     void setObjectContents1(const char* objectName, const char* contents);
     void setObjectContents1(const char* objectName, const void* contents, size_t length);
@@ -34,13 +35,12 @@ private:
     uint8_t* getEntryBuffer(size_t size);
 
     //void openStream1(const char* objectName);
-    void setObjectContentsInDirectory1(RepositoryDirectory* dir, const char* objectName, const void* contents, size_t contentsLength,
-            unsigned int flags);
+    void setObjectContentsInDirectory1(RepositoryDirectory* dir, const char* objectName, const void* contents,
+            size_t contentsLength, unsigned int flags);
 
     ByteIO* io;
     bool deleteIO;
     bool isOpen = false;
-    bool canCreateNew;
 
     RepositoryDirectory* contentDirectory;
 

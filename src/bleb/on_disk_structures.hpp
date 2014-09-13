@@ -10,7 +10,7 @@ static const uint8_t prologueMagic[7] = {0x89, 'b', 'l', 'e', 'b', '\r', '\n'};
 
 struct RepositoryPrologue_t {
     enum { SIZE = 16 };
-    enum { FORMAT_VERSION_1 = 0x01 };
+    enum { kFormatVersion1 = 0x01 };
 
     uint8_t magic[7];
     uint8_t formatVersion;
@@ -37,17 +37,17 @@ struct ObjectEntryPrologueHeader_t {
     enum { SIZE = 6 };
 
     enum {
-        LENGTH_MASK = 0x7FFF,
-        IS_INVALIDATED = 0x8000,
+        kLengthMask = 0x7FFF,
+        kIsInvalidated = 0x8000,
     };
 
     enum {
-        IS_DIRECTORY = 0x0001,
-        HAS_STREAM_DESCR = 0x0002,
-        HAS_STORAGE_DESCR = 0x0004,
-        HAS_HASH128 = 0x0008,
-        HAS_INLINE_PAYLOAD = 0x0010,
-        IS_TEXT = 0x1001
+        kIsDirectory =      0x0001,
+        kHasStreamDescr =   0x0002,
+        kHasStorageDescr =  0x0004,
+        kHasHash128 =       0x0008,
+        kHasInlinePayload = 0x0010,
+        kIsText =           0x1001
     };
 
     uint16_t length;

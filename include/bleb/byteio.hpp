@@ -10,18 +10,18 @@ public:
     virtual ~ByteIO() {}
     virtual void close() {}
     virtual uint64_t getSize() = 0;
-    virtual bool getBytesAt(uint64_t pos, uint8_t* buffer, uint64_t count) = 0;
-    virtual bool setBytesAt(uint64_t pos, const uint8_t* buffer, uint64_t count) = 0;
+    virtual bool getBytesAt(uint64_t pos, uint8_t* buffer, size_t count) = 0;
+    virtual bool setBytesAt(uint64_t pos, const uint8_t* buffer, size_t count) = 0;
     virtual bool clearBytesAt(uint64_t pos, uint64_t count) = 0;
 };
 
 // ByteIO
 
-inline bool getBytesAt(ByteIO* io, uint64_t pos, uint8_t* buffer, uint64_t count) {
+inline bool getBytesAt(ByteIO* io, uint64_t pos, uint8_t* buffer, size_t count) {
     return io->getBytesAt(pos, buffer, count);
 }
 
-inline bool setBytesAt(ByteIO* io, uint64_t pos, const uint8_t* buffer, uint64_t count) {
+inline bool setBytesAt(ByteIO* io, uint64_t pos, const uint8_t* buffer, size_t count) {
     return io->setBytesAt(pos, buffer, count);
 }
 
@@ -50,17 +50,17 @@ bool storeStruct(ByteIO* io, uint64_t pos, const Struct& st) {
 
 // raw memory
 
-inline bool getBytesAt(const uint8_t* bytes, uint64_t pos, uint8_t* buffer, uint64_t count) {
+inline bool getBytesAt(const uint8_t* bytes, uint64_t pos, uint8_t* buffer, size_t count) {
     memcpy(buffer, bytes + pos, count);
     return true;
 }
 
-inline bool setBytesAt(uint8_t* bytes, uint64_t pos, const uint8_t* buffer, uint64_t count) {
+inline bool setBytesAt(uint8_t* bytes, uint64_t pos, const uint8_t* buffer, size_t count) {
     memcpy(bytes + pos, buffer, count);
     return true;
 }
 
-inline bool clearBytesAt(uint8_t* bytes, uint64_t pos, uint64_t count) {
+inline bool clearBytesAt(uint8_t* bytes, uint64_t pos, size_t count) {
     memset(bytes + pos, 0, count);
     return true;
 }
