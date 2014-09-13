@@ -108,7 +108,8 @@ with open(inputFilename, 'rb') as input:
 				printStreamDescriptor(streamDescr)
 				print()
 
-				#print(getStreamContents(streamDescr).read().decode('utf-8'))
+				if streamDescr[1] < 200:
+					print(getStreamContents(streamDescr).read().decode('utf-8'))
 
 			if prologueHeader[1] & HAS_INLINE_PAYLOAD:
 				contents = dir.read(prologueHeader[0] - ObjectEntryPrologueHeader_t.size - prologueHeader[2]).decode()

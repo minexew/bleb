@@ -6,8 +6,10 @@
 #include "repository_directory.hpp"
 #include "repository_stream.hpp"
 
+#include <limits>
+
 namespace bleb {
-template <typename T> static T roundUpBlockLength(T length) {
+template <typename T> static T roundUpBlockLength(T streamLengthHint, T blockLength) {
     T roundUpTo;
 
     // 0-255:       round to 32
@@ -15,16 +17,19 @@ template <typename T> static T roundUpBlockLength(T length) {
     // 4k-128k:     round to 4k
     // 128k+:       round to 16k
 
-    if (length < 256)
+    if (streamLengthHint < blockLength)
+        streamLengthHint = blockLength;
+
+    if (streamLengthHint < 256)
         roundUpTo = 32;
-    else if (length < 4 * 1024)
+    else if (streamLengthHint < 4 * 1024)
         roundUpTo = 256;
-    else if (length < 128 * 1024)
+    else if (streamLengthHint < 128 * 1024)
         roundUpTo = 4096;
     else
         roundUpTo = 16 * 1024;
 
-    return align(length, roundUpTo);
+    return align(blockLength, roundUpTo);
 }
 
 Repository::Repository(ByteIO* io, bool deleteIO) {
@@ -54,7 +59,7 @@ bool Repository::open(bool canCreateNew) {
 
         // Must create new
         if (!canCreateNew)
-            return error("can't create new"), false;
+            return error(errNotAllowed, "not allowed to initialize a new repository"), false;
 
         memcpy(prologue.magic, prologueMagic, sizeof(prologueMagic));
         prologue.formatVersion = 1;
@@ -79,10 +84,10 @@ bool Repository::open(bool canCreateNew) {
             return false;
 
         if (memcmp(prologue.magic, prologueMagic, sizeof(prologueMagic)) != 0)
-            return error("magic doesn't match"), false;
+            return error(errNotABlebRepository, "magic value doesn't match"), false;
 
         if (prologue.formatVersion > 1 || (prologue.flags & ~(0)) != 0)
-            return error("version not recognized"), false;
+            return error(errNotSupported, "repository format version not recognized"), false;
 
         //diagnostic("repo:\tHeader: format version %d", prologue.formatVersion);
 
@@ -102,31 +107,32 @@ void Repository::close() {
         isOpen = false;
     }
 
-    io->close();
-    io = nullptr;
+    if (io) {
+        io->close();
+        io = nullptr;
+    }
 }
 
-bool Repository::allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, uint64_t dataLength) {
-    dataLength = roundUpBlockLength(dataLength);
+bool Repository::allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, uint64_t streamLengthHint,
+        uint64_t spanLength) {
+    spanLength = roundUpBlockLength(streamLengthHint, spanLength);
 
     uint64_t pos = align(io->getSize(), /*reserveAlignment*/ 1);
-    diagnostic("allocating %u-byte span @ %u (end at %u)", (unsigned) dataLength, (unsigned) pos,
-            (unsigned) (pos + StreamDescriptor_t::SIZE + dataLength));
+    diagnostic("allocating %u-byte span @ %u (end at %u)", (unsigned) spanLength, (unsigned) pos,
+            (unsigned) (pos + StreamDescriptor_t::SIZE + spanLength));
 
-    // FIXME: ensure dataLength fits in header.reservedLength
+    assert(spanLength <= std::numeric_limits<uint32_t>::max());
 
     // initialize span
     SpanHeader_t header;
-    header.reservedLength = dataLength;
+    header.reservedLength = (uint32_t) spanLength;
     header.usedLength = 0;
     header.nextSpanLocation = 0;
 
-    // alignment
-    clearBytesAt(io, io->getSize(), pos - io->getSize());
-    // header
-    storeStruct(io, pos, header);
-    // data
-    clearBytesAt(io, pos + StreamDescriptor_t::SIZE, dataLength);
+    if (!clearBytesAt(io, io->getSize(), pos - io->getSize())       // alignment
+            || !storeStruct(io, pos, header)                        // header
+            || !clearBytesAt(io, pos + StreamDescriptor_t::SIZE, spanLength))   // data
+        return error.writeError(), false;
 
     location_out = pos;
     header_out = header;
@@ -140,16 +146,20 @@ uint8_t* Repository::getEntryBuffer(size_t size) {
     return entryBuffer;
 }
 
-void Repository::getObjectContents1(const char* objectName, uint8_t*& contents_out, size_t& length_out) {
-    contentDirectory->getObjectContents1(objectName, contents_out, length_out);
+void Repository::getObjectContents(const char* objectName, uint8_t*& contents_out, size_t& length_out) {
+    contentDirectory->getObjectContents(objectName, contents_out, length_out);
 }
 
-void Repository::setObjectContents1(const char* objectName, const char* contents) {
-    setObjectContents1(objectName, contents, strlen(contents));
+ByteIO* Repository::openStream(const char* objectName, int streamCreationMode) {
+    return contentDirectory->openStream(objectName, streamCreationMode, 0);
 }
 
-void Repository::setObjectContents1(const char* objectName, const void* contents, size_t length) {
-    contentDirectory->setObjectContents1(objectName, (const uint8_t*) contents, length,
-            kPreferInlinePayload, ObjectEntryPrologueHeader_t::kIsText);
+void Repository::setObjectContents(const char* objectName, const char* contents, int flags) {
+    setObjectContents(objectName, contents, strlen(contents), flags);
+}
+
+void Repository::setObjectContents(const char* objectName, const void* contents, size_t length, int flags) {
+    contentDirectory->setObjectContents(objectName, (const uint8_t*) contents, length,
+            flags, ObjectEntryPrologueHeader_t::kIsText);
 }
 }

@@ -1,4 +1,5 @@
 
+#include "internal.hpp"
 #include "repository_stream.hpp"
 
 #include <algorithm>
@@ -14,6 +15,8 @@ namespace bleb {
         descrDirty = false;
         pos = 0;
         haveCurrentSpan = false;
+
+        initialLengthHint = 0;
 
         retrieveStruct(descrIO, descrPos, descr);
 
@@ -35,16 +38,23 @@ namespace bleb {
         pos = 0;
         haveCurrentSpan = false;
 
+        initialLengthHint = 0;
+
         // create a new stream
         uint64_t firstSpanLocation;
-        assert(repo->allocateSpan(firstSpanLocation, firstSpan, reserveLength)); // FIXME: error handling
+        if (reserveLength > 0) {
+            assert(repo->allocateSpan(firstSpanLocation, firstSpan, expectedSize, reserveLength));
+        }
+        else
+            firstSpanLocation = 0;
 
         // initialize Stream Descriptor
         descr.location = firstSpanLocation;
         descr.length = 0;
         descrDirty = true;
 
-        setCurrentSpan(firstSpan, firstSpanLocation, 0);
+        if (firstSpanLocation != 0)
+            setCurrentSpan(firstSpan, firstSpanLocation, 0);
     }
 
     RepositoryStream::~RepositoryStream() {
@@ -66,8 +76,10 @@ namespace bleb {
         // FIXME: this is highly unoptimal right now (and possibly broken)
         // we're always starting from the block beginning and going span-by-span
 
-        if (descr.location == 0)        // we don't actually "exist"
-            assert(false);
+        if (descr.location == 0) {      // the stream doesn't even exist
+            diagnostic("warning: trying to from read an unallocated stream");
+            return false;
+        }
 
         if (pos > descr.length)
             return false;
@@ -88,10 +100,11 @@ namespace bleb {
             SpanHeader_t nextSpan;
             uint64_t nextSpanLocation = currentSpan.nextSpanLocation;
 
-            assert(nextSpanLocation != 0);  // FIXME: errors
+            if (nextSpanLocation != 0)
+                return error.unexpectedEndOfStream(), true;
 
             if (!retrieveStruct(io, nextSpanLocation, nextSpan))
-                return false;   // FIXME: errors
+                return error.readError(), false;
 
             setCurrentSpan(nextSpan, nextSpanLocation, currentSpanPosInStream + currentSpan.reservedLength);
         }
@@ -108,7 +121,6 @@ namespace bleb {
         size_t readTotal = 0;
 
         if (!haveCurrentSpan) {
-            fprintf(stderr, "goto right for read\n");
             if (!gotoRightSpan())
                 return readTotal;
         }
@@ -117,12 +129,12 @@ namespace bleb {
             // start by checking whether we currently are within any span
 
             const uint64_t remainingBytesInSpan = currentSpan.usedLength - posInCurrentSpan;
-            //fprintf(stderr, "%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posInCurrentSpan);
+            //diagnostic("%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posInCurrentSpan);
             if (remainingBytesInSpan > 0) {
                 const size_t read = (size_t) std::min<uint64_t>(remainingBytesInSpan, length);
 
                 if (!io->getBytesAt(currentSpanLocation + SpanHeader_t::SIZE + posInCurrentSpan, buffer, read))
-                    return false;
+                    return error.readError(), false;
 
                 posInCurrentSpan += read;
                 pos += read;
@@ -140,11 +152,10 @@ namespace bleb {
 
                 if (nextSpanLocation != 0) {
                     if (!retrieveStruct(io, nextSpanLocation, nextSpan))
-                        return readTotal;    // FIXME: errors
+                        return error.readError(), readTotal;
                 }
-                else {
-                    assert(false);
-                }
+                else
+                    return error.unexpectedEndOfStream(), true;
 
                 setCurrentSpan(nextSpan, nextSpanLocation, currentSpanPosInStream + currentSpan.reservedLength);
             }
@@ -163,10 +174,27 @@ namespace bleb {
         haveCurrentSpan = true;
     }
 
+    void RepositoryStream::setLength(uint64_t length) {
+        // TODO: release unneeded spans
+
+        descr.length = length;
+        descrDirty = true;
+    }
+
     void RepositoryStream::setPos(uint64_t pos) {
-        this->pos = pos;
-        //haveCurrentSpan = false;        // FIXME: haveCurrentSpan x currentSpanIsTheOne
-        gotoRightSpan();    // FIXME
+        if (this->pos != pos) {
+            this->pos = pos;
+
+            if (haveCurrentSpan
+                    && pos >= currentSpanPosInStream
+                    && pos < currentSpanPosInStream + currentSpan.reservedLength) {
+                posInCurrentSpan = (uint32_t)(pos - currentSpanPosInStream);
+            }
+            else {
+                // FIXME: haveCurrentSpan x currentSpanIsTheOne
+                haveCurrentSpan = false;
+            }
+        }
     }
 
     size_t RepositoryStream::write(const void* buffer_in, size_t length) {
@@ -178,12 +206,12 @@ namespace bleb {
         size_t writtenTotal = 0;
 
         if (!haveCurrentSpan) {
-            if (descr.length == 0) {
+            if (descr.location == 0) {
                 // the block is empty; allocate initial span
                 uint64_t firstSpanLocation;
 
-                if (!repo->allocateSpan(firstSpanLocation, firstSpan, length))
-                    return writtenTotal;    // FIXME: errors
+                if (!repo->allocateSpan(firstSpanLocation, firstSpan, initialLengthHint, length))
+                    return writtenTotal;
 
                 setCurrentSpan(firstSpan, firstSpanLocation, 0);
 
@@ -191,10 +219,9 @@ namespace bleb {
                 descrDirty = true;
             }
             else {
-                fprintf(stderr, "goto right for write\n");
                 // seek; will fail if pos > length
                 if (!gotoRightSpan())
-                    return writtenTotal;    // FIXME: errors
+                    return writtenTotal;
             }
         }
 
@@ -207,7 +234,7 @@ namespace bleb {
                 const size_t written = (size_t) std::min<uint64_t>(remainingBytesInSpan, length);
 
                 if (!io->setBytesAt(currentSpanLocation + SpanHeader_t::SIZE + posInCurrentSpan, buffer, written))
-                    return false;
+                    return error.writeError(), false;
 
                 posInCurrentSpan += written;
                 pos += written;
@@ -218,16 +245,13 @@ namespace bleb {
                     descrDirty = true;
                 }
 
-                ////if (written < (unsigned int) affectedBytesInSpan)
-                //    return writtenTotal;
-
                 buffer += written;
                 length -= written;
 
                 currentSpan.usedLength = std::max(currentSpan.usedLength, posInCurrentSpan);
 
                 if (!storeStruct(io, currentSpanLocation, currentSpan))
-                    return writtenTotal;
+                    return error.writeError(), writtenTotal;
 
                 // we cache firstSpan, so it might need to be updated
                 if (currentSpanPosInStream == 0)
@@ -244,19 +268,19 @@ namespace bleb {
                     // next span had been already allocated
 
                     if (!retrieveStruct(io, nextSpanLocation, nextSpan))
-                        return writtenTotal;    // FIXME: errors
+                        return error.readError(), writtenTotal;
                 }
                 else {
                     // allocate a new span to hold the rest of the data
 
-                    if (!repo->allocateSpan(nextSpanLocation, nextSpan, length))
+                    if (!repo->allocateSpan(nextSpanLocation, nextSpan, descr.length, length))
                         return writtenTotal;
 
                     // update CURRENT span to point to the NEW span
                     currentSpan.nextSpanLocation = nextSpanLocation;
 
                     if (!storeStruct(io, currentSpanLocation, currentSpan))
-                        return writtenTotal;    // FIXME: errors
+                        return error.writeError(), writtenTotal;
 
                     // we cache firstSpan, so it might need to be updated
                     if (currentSpanPosInStream == 0)

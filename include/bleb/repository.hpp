@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
@@ -14,26 +15,56 @@ enum {
     //REQUIRE_INLINE_PAYLOAD = 2,
 };
 
+enum ErrorKind {
+    errNoError = 0,
+    errInternal,
+    errNotAllowed,
+    errIO,
+    errUnexpectedEOF,
+    errRepositoryCorruption,
+    errNotABlebRepository,
+    errNotEnoughMemory,
+    errNotSupported,
+};
+
+enum StreamCreationMode {
+    kStreamCreate = 1,
+    kStreamTruncate = 2
+};
+
+struct ErrorStruct_ {
+    ErrorStruct_() : errorKind(errNoError), errorDesc(nullptr) {}
+    ~ErrorStruct_() { free(errorDesc); }
+
+    void operator()(ErrorKind kind, const char* desc);
+    void readError();
+    void repositoryCorruption(const char* hint);
+    void unexpectedEndOfStream();
+    void writeError();
+
+    ErrorKind errorKind;
+    char* errorDesc;
+};
+
 class Repository {
 public:
-    enum StreamCreationMode {
-        kStreamCreate = 1,
-        kStreamTruncate = 2
-    };
-
     Repository(ByteIO* io, bool deleteIO);
     ~Repository();
     bool open(bool canCreateNew);
     void close();
 
-    //ByteIO* openStream(const char* objectName, int streamCreationMode);
-    void getObjectContents1(const char* objectName, uint8_t*& contents_out, size_t& length_out);
-    void setObjectContents1(const char* objectName, const char* contents);
-    void setObjectContents1(const char* objectName, const void* contents, size_t length);
+    ErrorKind getErrorKind() const { return error.errorKind; }
+    const char* getErrorDesc() const { return error.errorDesc; }
+
+    ByteIO* openStream(const char* objectName, int streamCreationMode);
+    void getObjectContents(const char* objectName, uint8_t*& contents_out, size_t& length_out);
+    void setObjectContents(const char* objectName, const char* contents, int flags);
+    void setObjectContents(const char* objectName, const void* contents, size_t length, int flags);
 
 private:
-    bool allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, uint64_t dataLength);
-    void error(const char* what) { fprintf(stderr, "%s\n", what); exit(EXIT_FAILURE); }
+    Repository(const Repository&) = delete;
+
+    bool allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, uint64_t streamLengthHint, uint64_t spanLength);
 
     uint8_t* getEntryBuffer(size_t size);
 
@@ -50,6 +81,8 @@ private:
     // entry buffer
     uint8_t* entryBuffer;
     size_t entryBufferSize;
+
+    ErrorStruct_ error;
 
     enum { reserveAlignment = 64 };
 

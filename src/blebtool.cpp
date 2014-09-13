@@ -4,6 +4,8 @@
 #include <extras/argument_parsing.hpp>
 #include <reflection/basic_types.hpp>
 
+#include <memory>
+
 using String = std::string;
 
 bleb::Repository* open(const String& path, bool canCreateNew) {
@@ -15,9 +17,9 @@ bleb::Repository* open(const String& path, bool canCreateNew) {
     }
 
     auto io = new bleb::StdioFileByteIO(f, true);
-    auto repo = new bleb::Repository(io, canCreateNew, true);
+    auto repo = new bleb::Repository(io, true);
 
-    if (!repo->open()) {
+    if (!repo->open(canCreateNew)) {
         fprintf(stderr, "blebtool: failed to open repository in file '%s'\n", path.c_str());
         delete repo;
         return nullptr;
@@ -37,7 +39,7 @@ struct GetCommand {
     REFL_BEGIN("GetCommand", 1)
         ARG_REQUIRED(objectName,    "",     "name of the object to retrieve")
         ARG_REQUIRED(repository,    "-R",   "filename of the repository")
-        //ARG(outputFile,             "-o",   "path to the output file (standard output if not specified)")
+        ARG(outputFile,             "-o",   "path to the output file (standard output if not specified)")
     REFL_END
 
     int execute() {
@@ -46,31 +48,43 @@ struct GetCommand {
         if (repo == nullptr)
             return -1;
 
+        FILE* output = outputFile.empty() ? stdin : fopen(outputFile.c_str(), "wb");
+
+        if (!output) {
+            fprintf(stderr, "blebtool: failed to open '%s' for ouput\n", outputFile.c_str());
+            return -1;
+        }
+
         uint8_t* contents;
         size_t length;
 
-        repo->getObjectContents1(objectName.c_str(), contents, length);
+        repo->getObjectContents(objectName.c_str(), contents, length);
         delete repo;
 
-        fwrite(contents, 1, length, stdout);
+        fwrite(contents, 1, length, output);
+
+        if (output != stdout)
+            fclose(output);
+
         return 0;
     }
 };
 
 struct PutCommand {
-    PutCommand() : size(0) {}
+    PutCommand() : noInline(false) {}
 
     String objectName;
     String repository;
     String inputFile;
     String text;
-    int64_t size;
+    bool noInline;
 
     REFL_BEGIN("PutCommand", 1)
         ARG_REQUIRED(objectName,    "",     "name of the object to create or replace")
         ARG_REQUIRED(repository,    "-R",   "filename of the repository")
-        //ARG(inputFile,              "-i",   "path to the input file (standard input if not specified)")
+        ARG(inputFile,              "-i",   "path to the input file (standard input if not specified)")
         ARG(text,                   "-T",   "directly specifies the data to store")
+        ARG(noInline,               "--no-inline", "do not use an Inline Payload for this object")
     REFL_END
 
     int execute() {
@@ -79,25 +93,40 @@ struct PutCommand {
         if (repo == nullptr)
             return -1;
 
-        if (text.empty()) {
-            uint8_t* buffer = nullptr;
-            size_t used = 0;
+        int flags = 0;
 
-            while (!feof(stdin)) {
+        if (!noInline)
+            flags |= bleb::kPreferInlinePayload;
+
+        if (!text.empty()) {
+            repo->setObjectContents(objectName.c_str(), text.c_str(), text.length(), flags);
+        }
+        else {
+            std::unique_ptr<bleb::ByteIO> stream(repo->openStream(objectName.c_str(),
+                    bleb::kStreamCreate | bleb::kStreamTruncate));
+            assert(stream);
+            size_t pos = 0;
+
+            FILE* input = inputFile.empty() ? stdin : fopen(inputFile.c_str(), "rb");
+
+            if (!input) {
+                fprintf(stderr, "blebtool: failed to open '%s' for input\n", inputFile.c_str());
+                return -1;
+            }
+
+            while (!feof(input)) {
                 uint8_t in[4096];
-                size_t got = fread(in, 1, sizeof(in), stdin);
+                size_t got = fread(in, 1, sizeof(in), input);
 
                 if (got) {
-                    buffer = (uint8_t*) realloc(buffer, used + got);
-                    memcpy(buffer + used, in, got);
-                    used += got;
+                    stream->setBytesAt(pos, in, got);
+                    pos += got;
                 }
             }
 
-            repo->setObjectContents1(objectName.c_str(), buffer, used);
+            if (input != stdin)
+                fclose(input);
         }
-        else
-            repo->setObjectContents1(objectName.c_str(), text.c_str(), text.length());
 
         delete repo;
 
