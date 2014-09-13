@@ -16,14 +16,17 @@ enum {
 
 class Repository {
 public:
-    //enum { kStreamCreate = 1, kStreamTruncate = 2 };
+    enum StreamCreationMode {
+        kStreamCreate = 1,
+        kStreamTruncate = 2
+    };
 
     Repository(ByteIO* io, bool deleteIO);
     ~Repository();
     bool open(bool canCreateNew);
     void close();
 
-    //ByteIO* openStream1(const char* objectName, int creationFlags);
+    //ByteIO* openStream(const char* objectName, int streamCreationMode);
     void getObjectContents1(const char* objectName, uint8_t*& contents_out, size_t& length_out);
     void setObjectContents1(const char* objectName, const char* contents);
     void setObjectContents1(const char* objectName, const void* contents, size_t length);

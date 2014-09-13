@@ -1,0 +1,272 @@
+
+#include "repository_stream.hpp"
+
+#include <algorithm>
+
+namespace bleb {
+    RepositoryStream::RepositoryStream(Repository* repo, ByteIO* streamDescrIO, uint64_t streamDescrPos) {
+        this->repo = repo;
+        this->io = repo->io;
+        this->isReadOnly = false;
+        this->descrIO = streamDescrIO;
+        this->descrPos = streamDescrPos;
+
+        descrDirty = false;
+        pos = 0;
+        haveCurrentSpan = false;
+
+        retrieveStruct(descrIO, descrPos, descr);
+
+        if (descr.location != 0) {
+            retrieveStruct(io, descr.location, firstSpan);
+            setCurrentSpan(firstSpan, descr.location, 0);
+        }
+    }
+
+    RepositoryStream::RepositoryStream(Repository* repo, ByteIO* streamDescrIO, uint64_t streamDescrPos,
+            uint32_t reserveLength, uint64_t expectedSize) {
+        this->repo = repo;
+        this->io = repo->io;
+        this->isReadOnly = false;
+        this->descrIO = streamDescrIO;
+        this->descrPos = streamDescrPos;
+
+        descrDirty = false;
+        pos = 0;
+        haveCurrentSpan = false;
+
+        // create a new stream
+        uint64_t firstSpanLocation;
+        assert(repo->allocateSpan(firstSpanLocation, firstSpan, reserveLength)); // FIXME: error handling
+
+        // initialize Stream Descriptor
+        descr.location = firstSpanLocation;
+        descr.length = 0;
+        descrDirty = true;
+
+        setCurrentSpan(firstSpan, firstSpanLocation, 0);
+    }
+
+    RepositoryStream::~RepositoryStream() {
+        if (descrDirty)
+            storeStruct(descrIO, descrPos, descr);
+    }
+
+    bool RepositoryStream::clearBytesAt(uint64_t pos, uint64_t count) {
+        setPos(pos);
+
+        while (count--)
+            if (!write("\x00", 1))
+                return false;
+
+        return true;
+    }
+
+    bool RepositoryStream::gotoRightSpan() {
+        // FIXME: this is highly unoptimal right now (and possibly broken)
+        // we're always starting from the block beginning and going span-by-span
+
+        if (descr.location == 0)        // we don't actually "exist"
+            assert(false);
+
+        if (pos > descr.length)
+            return false;
+
+        setCurrentSpan(firstSpan, descr.location, 0);
+
+        while (pos != currentSpanPosInStream) {
+            // this should never happen
+            if (currentSpanPosInStream > descr.length)
+                assert(false);
+
+            // is the 'pos' we're looking for within this span?
+            if (pos <= currentSpanPosInStream + currentSpan.reservedLength) {
+                posInCurrentSpan = (uint32_t)(pos - currentSpanPosInStream);
+                break;
+            }
+
+            SpanHeader_t nextSpan;
+            uint64_t nextSpanLocation = currentSpan.nextSpanLocation;
+
+            assert(nextSpanLocation != 0);  // FIXME: errors
+
+            if (!retrieveStruct(io, nextSpanLocation, nextSpan))
+                return false;   // FIXME: errors
+
+            setCurrentSpan(nextSpan, nextSpanLocation, currentSpanPosInStream + currentSpan.reservedLength);
+        }
+
+        return true;
+    }
+
+    size_t RepositoryStream::read(void* buffer_in, size_t length) {
+        if (length == 0)
+            return 0;
+
+        uint8_t* buffer = reinterpret_cast<uint8_t*>(buffer_in);
+
+        size_t readTotal = 0;
+
+        if (!haveCurrentSpan) {
+            fprintf(stderr, "goto right for read\n");
+            if (!gotoRightSpan())
+                return readTotal;
+        }
+
+        for (; length > 0;) {
+            // start by checking whether we currently are within any span
+
+            const uint64_t remainingBytesInSpan = currentSpan.usedLength - posInCurrentSpan;
+            //fprintf(stderr, "%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posInCurrentSpan);
+            if (remainingBytesInSpan > 0) {
+                const size_t read = (size_t) std::min<uint64_t>(remainingBytesInSpan, length);
+
+                if (!io->getBytesAt(currentSpanLocation + SpanHeader_t::SIZE + posInCurrentSpan, buffer, read))
+                    return false;
+
+                posInCurrentSpan += read;
+                pos += read;
+                readTotal += read;
+
+                buffer += read;
+                length -= read;
+            }
+
+            if (length > 0) {
+                // continue in next span
+                SpanHeader_t nextSpan;
+
+                uint64_t nextSpanLocation = currentSpan.nextSpanLocation;
+
+                if (nextSpanLocation != 0) {
+                    if (!retrieveStruct(io, nextSpanLocation, nextSpan))
+                        return readTotal;    // FIXME: errors
+                }
+                else {
+                    assert(false);
+                }
+
+                setCurrentSpan(nextSpan, nextSpanLocation, currentSpanPosInStream + currentSpan.reservedLength);
+            }
+        }
+
+        return readTotal;
+    }
+
+    void RepositoryStream::setCurrentSpan(const SpanHeader_t& span, uint64_t spanLocation, uint64_t spanPosInStream) {
+        currentSpan = span;
+
+        currentSpanLocation = spanLocation;
+        currentSpanPosInStream = spanPosInStream;
+        posInCurrentSpan = 0;
+
+        haveCurrentSpan = true;
+    }
+
+    void RepositoryStream::setPos(uint64_t pos) {
+        this->pos = pos;
+        //haveCurrentSpan = false;        // FIXME: haveCurrentSpan x currentSpanIsTheOne
+        gotoRightSpan();    // FIXME
+    }
+
+    size_t RepositoryStream::write(const void* buffer_in, size_t length) {
+        if (isReadOnly || length == 0)
+            return 0;
+
+        const uint8_t* buffer = reinterpret_cast<const uint8_t*>(buffer_in);
+
+        size_t writtenTotal = 0;
+
+        if (!haveCurrentSpan) {
+            if (descr.length == 0) {
+                // the block is empty; allocate initial span
+                uint64_t firstSpanLocation;
+
+                if (!repo->allocateSpan(firstSpanLocation, firstSpan, length))
+                    return writtenTotal;    // FIXME: errors
+
+                setCurrentSpan(firstSpan, firstSpanLocation, 0);
+
+                descr.location = firstSpanLocation;
+                descrDirty = true;
+            }
+            else {
+                fprintf(stderr, "goto right for write\n");
+                // seek; will fail if pos > length
+                if (!gotoRightSpan())
+                    return writtenTotal;    // FIXME: errors
+            }
+        }
+
+        for (; length > 0;) {
+            // start by checking whether we currently are within any span
+
+            const uint64_t remainingBytesInSpan = currentSpan.reservedLength - posInCurrentSpan;
+
+            if (remainingBytesInSpan > 0) {
+                const size_t written = (size_t) std::min<uint64_t>(remainingBytesInSpan, length);
+
+                if (!io->setBytesAt(currentSpanLocation + SpanHeader_t::SIZE + posInCurrentSpan, buffer, written))
+                    return false;
+
+                posInCurrentSpan += written;
+                pos += written;
+                writtenTotal += written;
+
+                if (pos > descr.length) {
+                    descr.length = pos;
+                    descrDirty = true;
+                }
+
+                ////if (written < (unsigned int) affectedBytesInSpan)
+                //    return writtenTotal;
+
+                buffer += written;
+                length -= written;
+
+                currentSpan.usedLength = std::max(currentSpan.usedLength, posInCurrentSpan);
+
+                if (!storeStruct(io, currentSpanLocation, currentSpan))
+                    return writtenTotal;
+
+                // we cache firstSpan, so it might need to be updated
+                if (currentSpanPosInStream == 0)
+                    firstSpan = currentSpan;
+            }
+
+            if (length > 0) {
+                // continue in next span
+                SpanHeader_t nextSpan;
+
+                uint64_t nextSpanLocation = currentSpan.nextSpanLocation;
+
+                if (nextSpanLocation != 0) {
+                    // next span had been already allocated
+
+                    if (!retrieveStruct(io, nextSpanLocation, nextSpan))
+                        return writtenTotal;    // FIXME: errors
+                }
+                else {
+                    // allocate a new span to hold the rest of the data
+
+                    if (!repo->allocateSpan(nextSpanLocation, nextSpan, length))
+                        return writtenTotal;
+
+                    // update CURRENT span to point to the NEW span
+                    currentSpan.nextSpanLocation = nextSpanLocation;
+
+                    if (!storeStruct(io, currentSpanLocation, currentSpan))
+                        return writtenTotal;    // FIXME: errors
+
+                    // we cache firstSpan, so it might need to be updated
+                    if (currentSpanPosInStream == 0)
+                        firstSpan = currentSpan;
+                }
+
+                setCurrentSpan(nextSpan, nextSpanLocation, currentSpanPosInStream + currentSpan.reservedLength);
+            }
+        }
+
+        return writtenTotal;
+    }
+}
