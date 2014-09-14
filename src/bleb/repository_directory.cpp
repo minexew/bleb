@@ -9,6 +9,7 @@
 
 #include <limits>
 #include <memory>
+#include <vector>
 
 namespace bleb {
 RepositoryDirectory::RepositoryDirectory(Repository* repo, RepositoryStream* directoryStream) {
@@ -181,9 +182,8 @@ ByteIO* RepositoryDirectory::openStream(const char* objectName, int streamCreati
     int objectFlags = ObjectEntryPrologueHeader_t::kHasStreamDescr;
     objectEntryLength = prologueLength + StreamDescriptor_t::SIZE;
 
-    // these will be useful later
-    uint8_t* contents = nullptr;
-    size_t contentsLength = 0;
+    // this will be useful later
+    std::vector<uint8_t> contents;
 
     //
     uint64_t objectEntryPos;
@@ -217,10 +217,9 @@ ByteIO* RepositoryDirectory::openStream(const char* objectName, int streamCreati
 
             if (!(streamCreationMode & kStreamTruncate)) {
                 // FIXME: offset might be incorrect due to other descriptors
-                contentsLength = prologueHeader.length - offset;
-                contents = (uint8_t*) malloc(contentsLength);
+                contents.resize(prologueHeader.length - offset);
 
-                if (!getBytesAt(directoryStream, pos + offset, contents, contentsLength))
+                if (!getBytesAt(directoryStream, pos + offset, &contents[0], contents.size()))
                     return repo->error.readError(), nullptr;
             }
 
@@ -281,15 +280,12 @@ ByteIO* RepositoryDirectory::openStream(const char* objectName, int streamCreati
     std::unique_ptr<RepositoryStream> stream(new RepositoryStream(
             repo, directoryStream, objectEntryPos + streamDescrOffset, reserveLength, reserveLength));
 
-    if (contents) {
+    if (contents.size()) {
         // if there was an inline payload (and we're not truncating), write it into the stream now
-        if (!stream->write(contents, contentsLength)) {
-            free(contents);
+        if (!stream->write(&contents[0], contents.size()))
             return nullptr;
-        }
 
         stream->setPos(0);
-        free(contents);
     }
 
     return stream.release();

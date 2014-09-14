@@ -43,7 +43,8 @@ namespace bleb {
         // create a new stream
         uint64_t firstSpanLocation;
         if (reserveLength > 0) {
-            assert(repo->allocateSpan(firstSpanLocation, firstSpan, expectedSize, reserveLength));
+            bool alloc = repo->allocateSpan(firstSpanLocation, firstSpan, expectedSize, reserveLength);
+            assert(alloc);
         }
         else
             firstSpanLocation = 0;
@@ -100,11 +101,12 @@ namespace bleb {
             SpanHeader_t nextSpan;
             uint64_t nextSpanLocation = currentSpan.nextSpanLocation;
 
-            if (nextSpanLocation != 0)
-                return error.unexpectedEndOfStream(), true;
-
-            if (!retrieveStruct(io, nextSpanLocation, nextSpan))
-                return error.readError(), false;
+            if (nextSpanLocation != 0) {
+                if (!retrieveStruct(io, nextSpanLocation, nextSpan))
+                    return error.readError(), false;
+            }
+            else
+                return error.unexpectedEndOfStream(), false;
 
             setCurrentSpan(nextSpan, nextSpanLocation, currentSpanPosInStream + currentSpan.reservedLength);
         }
@@ -128,13 +130,17 @@ namespace bleb {
         for (; length > 0;) {
             // start by checking whether we currently are within any span
 
-            const uint64_t remainingBytesInSpan = currentSpan.usedLength - posInCurrentSpan;
+            const uint64_t remainingBytesInSpan = currentSpan.reservedLength - posInCurrentSpan;
+
             //diagnostic("%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posInCurrentSpan);
             if (remainingBytesInSpan > 0) {
+                if (length > currentSpan.usedLength && currentSpan.usedLength < currentSpan.reservedLength)
+                    return error.repositoryCorruption("span not fully utilized"), readTotal;
+
                 const size_t read = (size_t) std::min<uint64_t>(remainingBytesInSpan, length);
 
                 if (!io->getBytesAt(currentSpanLocation + SpanHeader_t::SIZE + posInCurrentSpan, buffer, read))
-                    return error.readError(), false;
+                    return error.readError(), readTotal;
 
                 posInCurrentSpan += read;
                 pos += read;
@@ -147,7 +153,6 @@ namespace bleb {
             if (length > 0) {
                 // continue in next span
                 SpanHeader_t nextSpan;
-
                 uint64_t nextSpanLocation = currentSpan.nextSpanLocation;
 
                 if (nextSpanLocation != 0) {
@@ -155,7 +160,7 @@ namespace bleb {
                         return error.readError(), readTotal;
                 }
                 else
-                    return error.unexpectedEndOfStream(), true;
+                    return error.unexpectedEndOfStream(), readTotal;
 
                 setCurrentSpan(nextSpan, nextSpanLocation, currentSpanPosInStream + currentSpan.reservedLength);
             }

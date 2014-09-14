@@ -47,7 +47,8 @@ struct ObjectEntryPrologueHeader_t {
         kHasStorageDescr =  0x0004,
         kHasHash128 =       0x0008,
         kHasInlinePayload = 0x0010,
-        kIsText =           0x1001
+
+        kIsText =           0x0100,
     };
 
     uint16_t length;
