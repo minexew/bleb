@@ -150,7 +150,7 @@ void Repository::getObjectContents(const char* objectName, uint8_t*& contents_ou
     contentDirectory->getObjectContents(objectName, contents_out, length_out);
 }
 
-ByteIO* Repository::openStream(const char* objectName, int streamCreationMode) {
+std::unique_ptr<ByteIO> Repository::openStream(const char* objectName, int streamCreationMode) {
     return contentDirectory->openStream(objectName, streamCreationMode, 0);
 }
 

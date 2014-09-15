@@ -17,7 +17,7 @@ public:
     bool setObjectContents(const char* objectName, const uint8_t* contents, size_t contentsLength,
             unsigned int flags, unsigned int objectFlags);
 
-    ByteIO* openStream(const char* objectName, int streamCreationMode, uint32_t reserveLength);
+    std::unique_ptr<ByteIO> openStream(const char* objectName, int streamCreationMode, uint32_t reserveLength);
 
 private:
     RepositoryDirectory(const RepositoryDirectory&) = delete;

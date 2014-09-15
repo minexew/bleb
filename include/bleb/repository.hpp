@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include <memory>
+
 namespace bleb {
 
 struct SpanHeader_t;
@@ -56,7 +58,7 @@ public:
     ErrorKind getErrorKind() const { return error.errorKind; }
     const char* getErrorDesc() const { return error.errorDesc; }
 
-    ByteIO* openStream(const char* objectName, int streamCreationMode);
+    std::unique_ptr<ByteIO> openStream(const char* objectName, int streamCreationMode);
     void getObjectContents(const char* objectName, uint8_t*& contents_out, size_t& length_out);
     void setObjectContents(const char* objectName, const char* contents, int flags);
     void setObjectContents(const char* objectName, const void* contents, size_t length, int flags);

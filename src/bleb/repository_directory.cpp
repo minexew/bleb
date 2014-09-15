@@ -8,7 +8,6 @@
 #endif
 
 #include <limits>
-#include <memory>
 #include <vector>
 
 namespace bleb {
@@ -169,7 +168,8 @@ bool RepositoryDirectory::getObjectContents(const char* objectName, uint8_t*& co
  *
  *  If the object was not found nor created OR an error occured, nullptr is returned.
  */
-ByteIO* RepositoryDirectory::openStream(const char* objectName, int streamCreationMode, uint32_t reserveLength) {
+std::unique_ptr<ByteIO> RepositoryDirectory::openStream(const char* objectName, int streamCreationMode,
+        uint32_t reserveLength) {
     // first of all, calculate the entry size in case we need to create a new one
     // findObjectByName will use this to remember any suitable spot to place it
 
@@ -205,12 +205,12 @@ ByteIO* RepositoryDirectory::openStream(const char* objectName, int streamCreati
             // TODO: if the stream reserved size is laughably small, we should drop it and start anew
 
             // FIXME: offset might be incorrect due to other descriptors
-            auto stream = new RepositoryStream(repo, directoryStream, pos + offset);
+            std::unique_ptr<RepositoryStream> stream(new RepositoryStream(repo, directoryStream, pos + offset));
 
             if (streamCreationMode & kStreamTruncate)
                 stream->setLength(0);
 
-            return stream;
+            return std::move(stream);
         }
         else if (prologueHeader.flags & ObjectEntryPrologueHeader_t::kHasInlinePayload) {
             // get the existing inline payload and trash the entry (depending on its size, we'll reuse or invalidate it)
@@ -288,7 +288,7 @@ ByteIO* RepositoryDirectory::openStream(const char* objectName, int streamCreati
         stream->setPos(0);
     }
 
-    return stream.release();
+    return std::move(stream);
 }
 
 /*
