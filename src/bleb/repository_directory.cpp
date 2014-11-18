@@ -237,7 +237,7 @@ std::unique_ptr<ByteIO> RepositoryDirectory::openStream(const char* objectName, 
         }
         else {
             assert(false);
-            return repo->error.repositoryCorruption("object doesn't have any kind of payload"), false;
+            return repo->error.repositoryCorruption("object doesn't have any kind of payload"), nullptr;
         }
     }
     else {
@@ -274,7 +274,7 @@ std::unique_ptr<ByteIO> RepositoryDirectory::openStream(const char* objectName, 
 
     // store in directory now
     if (!overwriteObjectEntryAt(objectEntryPos, entryBytes, objectEntryLength))
-        return false;
+        return nullptr;
 
     // allocate stream
     std::unique_ptr<RepositoryStream> stream(new RepositoryStream(
