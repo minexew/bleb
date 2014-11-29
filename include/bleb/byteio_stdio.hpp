@@ -33,14 +33,12 @@ public:
 
     virtual bool getBytesAt(uint64_t pos, uint8_t* buffer, size_t count) override {
         fseek(file, pos, SEEK_SET);
-        assert(fread(buffer, 1, count, file) == count);
-        return true;
+        return (fread(buffer, 1, count, file) == count);
     }
 
     virtual bool setBytesAt(uint64_t pos, const uint8_t* buffer, size_t count) override {
         fseek(file, pos, SEEK_SET);
-        assert(fwrite(buffer, 1, count, file) == count);
-        return true;
+        return (fwrite(buffer, 1, count, file) == count);
     }
 
     virtual bool clearBytesAt(uint64_t pos, uint64_t count) override {
