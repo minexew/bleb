@@ -9,27 +9,32 @@
 #include <limits>
 
 namespace bleb {
-template <typename T> static T roundUpBlockLength(T streamLengthHint, T blockLength) {
-    T roundUpTo;
-
-    // 0-255:       round to 32
-    // 256-4k:      round to 256
-    // 4k-128k:     round to 4k
-    // 128k+:       round to 16k
+template <typename T> static T roundUpBlockLength(T streamLengthHint, T blockLength, T allocationGranularity) {
+    // minimal rounding is 32, beyond that always align to
+    // L / 8 where L is streamLengthHint rounded up to a power of 2
 
     if (streamLengthHint < blockLength)
         streamLengthHint = blockLength;
 
-    if (streamLengthHint < 256)
-        roundUpTo = 32;
-    else if (streamLengthHint < 4 * 1024)
-        roundUpTo = 256;
-    else if (streamLengthHint < 128 * 1024)
-        roundUpTo = 4096;
-    else
-        roundUpTo = 16 * 1024;
+    // https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
+    streamLengthHint--;
+    streamLengthHint |= streamLengthHint >> 1;
+    streamLengthHint |= streamLengthHint >> 2;
+    streamLengthHint |= streamLengthHint >> 4;
+    streamLengthHint |= streamLengthHint >> 8;
+    streamLengthHint |= streamLengthHint >> 16;
 
-    return align(blockLength, roundUpTo);
+    if (sizeof(streamLengthHint) >= 8)
+        streamLengthHint |= streamLengthHint >> 32;
+
+    streamLengthHint++;
+
+    streamLengthHint /= 8;
+
+    if (streamLengthHint < allocationGranularity)
+        streamLengthHint = allocationGranularity;
+
+    return align(blockLength, streamLengthHint);
 }
 
 Repository::Repository(ByteIO* io, bool deleteIO) {
@@ -38,6 +43,8 @@ Repository::Repository(ByteIO* io, bool deleteIO) {
 
     this->entryBuffer = nullptr;
     this->entryBufferSize = 0;
+
+    this->allocationGranularity = 32;
 }
 
 Repository::~Repository() {
@@ -115,7 +122,7 @@ void Repository::close() {
 
 bool Repository::allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, uint64_t streamLengthHint,
         uint64_t spanLength) {
-    spanLength = roundUpBlockLength(streamLengthHint, spanLength);
+    spanLength = roundUpBlockLength(streamLengthHint, spanLength, allocationGranularity);
 
     uint64_t pos = align(io->getSize(), /*reserveAlignment*/ 1);
     diagnostic("allocating %u-byte span @ %u (end at %u)", (unsigned) spanLength, (unsigned) pos,

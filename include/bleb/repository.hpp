@@ -10,7 +10,10 @@ namespace bleb {
 
 struct SpanHeader_t;
 class ByteIO;
+class Repository;
 class RepositoryDirectory;
+
+typedef uint64_t SizeType;
 
 enum {
     kPreferInlinePayload = 1,
@@ -48,6 +51,35 @@ struct ErrorStruct_ {
     char* errorDesc;
 };
 
+class DirectoryIterator {
+public:
+DirectoryIterator(Repository* repo, RepositoryDirectory* dir, SizeType pos);
+
+bool operator != (const DirectoryIterator& other) const
+{
+    return repo != other.repo || dir != other.dir || pos != other.pos;
+}
+
+const char* operator*() const
+{
+    return objectName;
+}
+
+DirectoryIterator& operator++()
+{
+    readNext();
+    return *this;
+}
+
+private:
+    bool readNext();
+
+    Repository* repo;
+    RepositoryDirectory* dir;
+    SizeType pos;
+    char* objectName;
+};
+
 class Repository {
 public:
     Repository(ByteIO* io, bool deleteIO);
@@ -62,6 +94,11 @@ public:
     void getObjectContents(const char* objectName, uint8_t*& contents_out, size_t& length_out);
     void setObjectContents(const char* objectName, const char* contents, int flags);
     void setObjectContents(const char* objectName, const void* contents, size_t length, int flags);
+
+    void setAllocationGranularity(SizeType value) { this->allocationGranularity = value; }
+
+    DirectoryIterator begin() { return DirectoryIterator(this, contentDirectory, 0); }
+    DirectoryIterator end() { return DirectoryIterator(this, contentDirectory, (SizeType) -1); }
 
 private:
     Repository(const Repository&) = delete;
@@ -86,11 +123,15 @@ private:
 
     ErrorStruct_ error;
 
+    // tuning
+    SizeType allocationGranularity;
+
     enum { reserveAlignment = 64 };
 
-    enum { contentDirectoryReserveLength = 240 };
-    enum { contentDirectoryExpectedSize = 4096 };
+    enum { contentDirectoryReserveLength = 192 };
+    enum { contentDirectoryExpectedSize = 192 };
 
+    friend class DirectoryIterator;
     friend class RepositoryDirectory;
     friend class RepositoryStream;
 };

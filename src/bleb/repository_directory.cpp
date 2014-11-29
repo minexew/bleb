@@ -11,6 +11,58 @@
 #include <vector>
 
 namespace bleb {
+DirectoryIterator::DirectoryIterator(Repository* repo, RepositoryDirectory* dir, SizeType pos) {
+    this->repo = repo;
+    this->dir = dir;
+    this->pos = pos;
+    this->objectName = nullptr;
+
+    readNext();
+}
+
+bool DirectoryIterator::readNext() {
+    RepositoryStream* directoryStream = dir->directoryStream;
+
+    directoryStream->setPos(pos);
+
+    while (pos < directoryStream->getSize()) {
+        ObjectEntryPrologueHeader_t prologueHeader;
+
+        // read the entry's prologue header
+        if (!retrieveStruct(directoryStream, pos, prologueHeader))
+            return repo->error.readError(), false;
+
+        // calculate actual entry length in bytes
+        const uint16_t paddedEntryLength = align(prologueHeader.length & ObjectEntryPrologueHeader_t::kLengthMask, 16);
+
+        if (!(prologueHeader.length & ObjectEntryPrologueHeader_t::kIsInvalidated)) {
+            // entry is valid, let's have a look at it
+
+            if ((prologueHeader.length & ObjectEntryPrologueHeader_t::kLengthMask) < 6)
+                return repo->error.repositoryCorruption("entry with invalid length (length < 6)"), false;
+
+            size_t offset = ObjectEntryPrologueHeader_t::SIZE;
+
+            // read object name
+            objectName = (char*) repo->getEntryBuffer(prologueHeader.nameLength + 1);
+
+            if (!getBytesAt(directoryStream, pos + offset, (uint8_t*) objectName, prologueHeader.nameLength))
+                return repo->error.readError(), false;
+
+            objectName[prologueHeader.nameLength] = 0;
+            pos += paddedEntryLength;
+            return true;
+        }
+
+        pos += paddedEntryLength;
+    }
+
+    objectName = nullptr;
+    pos = (SizeType) -1;
+
+    return false;
+}
+
 RepositoryDirectory::RepositoryDirectory(Repository* repo, RepositoryStream* directoryStream) {
     this->repo = repo;
     this->directoryStream = directoryStream;

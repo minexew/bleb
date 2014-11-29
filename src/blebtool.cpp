@@ -7,8 +7,9 @@
 #include <memory>
 
 using String = std::string;
+using std::unique_ptr;
 
-bleb::Repository* open(const String& path, bool canCreateNew) {
+unique_ptr<bleb::Repository> open(const String& path, bool canCreateNew) {
     FILE* f = bleb::StdioFileByteIO::getFile(path.c_str(), canCreateNew);
 
     if (!f) {
@@ -17,15 +18,14 @@ bleb::Repository* open(const String& path, bool canCreateNew) {
     }
 
     auto io = new bleb::StdioFileByteIO(f, true);
-    auto repo = new bleb::Repository(io, true);
+    unique_ptr<bleb::Repository> repo(new bleb::Repository(io, true));
 
     if (!repo->open(canCreateNew)) {
         fprintf(stderr, "blebtool: failed to open repository in file '%s'\n", path.c_str());
-        delete repo;
         return nullptr;
     }
 
-    return repo;
+    return std::move(repo);
 }
 
 struct GetCommand {
@@ -48,7 +48,7 @@ struct GetCommand {
         if (repo == nullptr)
             return -1;
 
-        FILE* output = outputFile.empty() ? stdin : fopen(outputFile.c_str(), "wb");
+        FILE* output = outputFile.empty() ? stdout : fopen(outputFile.c_str(), "wb");
 
         if (!output) {
             fprintf(stderr, "blebtool: failed to open '%s' for ouput\n", outputFile.c_str());
@@ -59,12 +59,54 @@ struct GetCommand {
         size_t length;
 
         repo->getObjectContents(objectName.c_str(), contents, length);
-        delete repo;
+        repo.reset();
 
         fwrite(contents, 1, length, output);
+        free(contents);
 
         if (output != stdout)
             fclose(output);
+        else
+            fflush(output);
+
+        return 0;
+    }
+};
+
+struct MergeCommand {
+    MergeCommand() {}
+
+    String inputRepository;
+    String repository;
+    String prefix;
+
+    REFL_BEGIN("MergeCommand", 1)
+        ARG_REQUIRED(inputRepository,   "",     "filename of the repository to merge from")
+        ARG_REQUIRED(repository,        "-R",   "filename of the repository to merge into")
+        ARG(prefix,                     "-p",   "prefix for copied objects in the destination repository")
+    REFL_END
+
+    int execute() {
+        auto inputRepo = open(inputRepository, false);
+
+        if (inputRepo == nullptr)
+            return -1;
+
+        auto repo = open(repository, true);
+
+        if (repo == nullptr)
+            return -1;
+
+        for (auto entry : *inputRepo)
+        {
+            uint8_t* contents;
+            size_t length;
+
+            inputRepo->getObjectContents(entry, contents, length);
+            repo->setObjectContents((prefix + entry).c_str(), contents, length, (length < 256) ? bleb::kPreferInlinePayload : 0);
+
+            free(contents);
+        }
 
         return 0;
     }
@@ -128,7 +170,7 @@ struct PutCommand {
                 fclose(input);
         }
 
-        delete repo;
+        repo.reset();
 
         return 0;
     }
@@ -140,6 +182,7 @@ using argument_parsing::help;
 
 static const Command_t commands[] = {
     {"get",         "get the contents of an object in the repository", execute<GetCommand>, help<GetCommand>},
+    {"merge",       "merge the contents of one repository into another", execute<MergeCommand>, help<MergeCommand>},
     {"put",         "set the contents of an object in the repository", execute<PutCommand>, help<PutCommand>},
     {}
 };
