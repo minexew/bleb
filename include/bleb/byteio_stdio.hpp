@@ -10,21 +10,27 @@
 namespace bleb {
 class StdioFileByteIO : public ByteIO {
 public:
-	static FILE* getFile(const char* path, bool canCreateNew) {
-	    FILE* f = fopen(path, "rb+");
+    static FILE* getFile(const char* path, bool canCreateNew) {
+        FILE* f = fopen(path, "rb+");
 
-	    if (f == nullptr && canCreateNew)
-	        f = fopen(path, "wb+");
+        if (f == nullptr && canCreateNew)
+            f = fopen(path, "wb+");
 
-	    return f;
-	}
+        return f;
+    }
 
-    StdioFileByteIO(FILE* file, bool close) : file(file), close(close) {}
+    StdioFileByteIO(FILE* file, bool close) : file(file), close_(close) {}
 
- 	~StdioFileByteIO() {
- 		if (close)
- 			fclose(file);
- 	}
+    ~StdioFileByteIO() {
+        close();
+    }
+
+    void close() {
+        if (close_ && file) {
+            fclose(file);
+            file = NULL;
+        }
+    }
 
     virtual uint64_t getSize() override {
         fseek(file, 0, SEEK_END);
@@ -59,6 +65,6 @@ public:
     }
 
     FILE* file;
-    bool close;
+    bool close_;
 };
 }
