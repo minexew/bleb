@@ -2,7 +2,7 @@
 #include "repository_directory.hpp"
 #include "repository_stream.hpp"
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 // needed for alloca
 #include <malloc.h>
 #endif
