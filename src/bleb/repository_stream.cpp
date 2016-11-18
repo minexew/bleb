@@ -134,7 +134,7 @@ namespace bleb {
 
             //diagnostic("%llu = %u - %llu\n", remainingBytesInSpan, currentSpan.usedLength, posInCurrentSpan);
             if (remainingBytesInSpan > 0) {
-                if (length > currentSpan.usedLength && currentSpan.usedLength < currentSpan.reservedLength)
+                if (currentSpan.nextSpanLocation && currentSpan.usedLength < currentSpan.reservedLength)
                     return error.repositoryCorruption("span not fully utilized"), readTotal;
 
                 const size_t read = (size_t) std::min<uint64_t>(remainingBytesInSpan, length);
