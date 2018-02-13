@@ -1,0 +1,25 @@
+language: cpp
+sudo: false
+dist: trusty
+addons:
+  apt:
+    sources:
+      - llvm-toolchain-trusty-5.0 # clang 5.0
+      - ubuntu-toolchain-r-test # gcc-6
+    packages:
+      - clang-5.0
+      - g++-6
+before_install:
+  - if [ $TRAVIS_OS_NAME == linux ] && [ "$CXX" = "clang++" ]; then export CC=clang-5.0; fi
+  - if [ $TRAVIS_OS_NAME == linux ] && [ "$CXX" = "clang++" ]; then export CXX=clang++-5.0; fi
+
+  - if [ $TRAVIS_OS_NAME == linux ] && [ "$CXX" = "g++" ]; then export CC=gcc-6; fi
+  - if [ $TRAVIS_OS_NAME == linux ] && [ "$CXX" = "g++" ]; then export CXX=g++-6; fi
+
+script: cmake . && make -j2 VERBOSE=1 && ./bleb_test
+compiler:
+  - clang
+  - gcc
+os:
+  - linux
+  - osx
