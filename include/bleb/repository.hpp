@@ -84,7 +84,6 @@ private:
 class Repository {
 public:
     Repository(ByteIO* io);
-    [[deprecated]] Repository(ByteIO* io, bool deleteIO);
     ~Repository();
     bool open(bool canCreateNew);
     void close();
@@ -103,6 +102,7 @@ public:
     void setObjectContents(const char* objectName, const char* contents, int flags);
     void setObjectContents(const char* objectName, const void* contents, size_t length, int flags);
 
+    // Use this to transfer ownership of the ByteIO to this Repository
     void setOwnedIO(std::unique_ptr<ByteIO>&& io);
 
     DirectoryIterator begin() { return DirectoryIterator(this, contentDirectory.get(), 0); }
@@ -123,7 +123,6 @@ private:
     ByteIO* io;
     std::unique_ptr<ByteIO> ownedIO;
 
-    bool deleteIO;
     bool isOpen = false;
 
     std::unique_ptr<RepositoryDirectory> contentDirectory;

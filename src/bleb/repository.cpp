@@ -39,17 +39,6 @@ template <typename T> static T roundUpBlockLength(T streamLengthHint, T blockLen
 
 Repository::Repository(ByteIO* io) {
     this->io = io;
-    this->deleteIO = false;
-
-    this->entryBuffer = nullptr;
-    this->entryBufferSize = 0;
-
-    this->allocationGranularity = 32;
-}
-
-Repository::Repository(ByteIO* io, bool deleteIO) {
-    this->io = io;
-    this->deleteIO = deleteIO;
 
     this->entryBuffer = nullptr;
     this->entryBufferSize = 0;
@@ -61,9 +50,6 @@ Repository::~Repository() {
     close();
 
     free(entryBuffer);
-
-    if (deleteIO)
-        delete io;
 }
 
 bool Repository::open(bool canCreateNew) {
