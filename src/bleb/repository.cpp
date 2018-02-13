@@ -37,6 +37,16 @@ template <typename T> static T roundUpBlockLength(T streamLengthHint, T blockLen
     return align(blockLength, streamLengthHint);
 }
 
+Repository::Repository(ByteIO* io) {
+    this->io = io;
+    this->deleteIO = false;
+
+    this->entryBuffer = nullptr;
+    this->entryBufferSize = 0;
+
+    this->allocationGranularity = 32;
+}
+
 Repository::Repository(ByteIO* io, bool deleteIO) {
     this->io = io;
     this->deleteIO = deleteIO;
@@ -75,14 +85,18 @@ bool Repository::open(bool canCreateNew) {
 
         if (!storeStruct(io, 0, prologue)
             || !clearBytesAt(io, RepositoryPrologue_t::SIZE, StreamDescriptor_t::SIZE))
-            return false;
+            return error.writeError(), false;
 
         // create Content Directory
-        // cds = Contend Directory Stream
+        // cds = Content Directory Stream
 
         auto cds = new RepositoryStream(this, io, cdsDescrLocation,
                 contentDirectoryReserveLength,
                 contentDirectoryExpectedSize);
+
+        // Stream allocation might have failed
+        if (!cds->hasFirstSpan())
+            return error.writeError(), false;
 
         contentDirectory = new RepositoryDirectory(this, cds);
     }

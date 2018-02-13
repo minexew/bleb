@@ -41,13 +41,12 @@ namespace bleb {
         initialLengthHint = 0;
 
         // create a new stream
-        uint64_t firstSpanLocation;
+        uint64_t firstSpanLocation = 0;
+
         if (reserveLength > 0) {
-            bool alloc = repo->allocateSpan(firstSpanLocation, firstSpan, expectedSize, reserveLength);
-            assert(alloc);
+            // This can fail. How to report?
+            repo->allocateSpan(firstSpanLocation, firstSpan, expectedSize, reserveLength);
         }
-        else
-            firstSpanLocation = 0;
 
         // initialize Stream Descriptor
         descr.location = firstSpanLocation;

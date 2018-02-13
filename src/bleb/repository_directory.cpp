@@ -462,6 +462,7 @@ bool RepositoryDirectory::setObjectContents(const char* objectName, const uint8_
             size_t offset = ObjectEntryPrologueHeader_t::SIZE + prologueHeader.nameLength;
 
             // FIXME: offset might be incorrect due to other descriptors
+            // FIXME: must check that write succeeded
             RepositoryStream stream(repo, directoryStream, pos + offset);
 
             stream.write(contents, contentsLength);
@@ -525,6 +526,7 @@ bool RepositoryDirectory::setObjectContents(const char* objectName, const uint8_
         RepositoryStream stream(repo, directoryStream, objectEntryPos + streamDescrOffset, contentsLength, contentsLength);
         
         if (!stream.write(contents, contentsLength))
+            // FIXME: propagate error
             return false;
 
         //  TODO: need to make sure the entry will be already written at this point - it would overwrite the now-correct

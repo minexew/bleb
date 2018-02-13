@@ -16,6 +16,8 @@ public:
     ErrorKind getErrorKind() const { return error.errorKind; }
     const char* getErrorDesc() const { return error.errorDesc; }
 
+    bool hasFirstSpan() const { return descr.location != 0; }
+
     void setInitialLengthHint(uint32_t initialLengthHint) { this->initialLengthHint = initialLengthHint; }
 
     virtual uint64_t getSize() override {

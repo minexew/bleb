@@ -30,7 +30,7 @@ void ErrorStruct_::operator()(ErrorKind kind, const char* desc) {
 }
 
 void ErrorStruct_::readError() {
-    (*this)(errIO, "failed to read data");
+    (*this)(errReadFailed, "failed to read data");
 }
 
 void ErrorStruct_::repositoryCorruption(const char* hint) {
@@ -44,6 +44,6 @@ void ErrorStruct_::unexpectedEndOfStream() {
 }
 
 void ErrorStruct_::writeError() {
-    (*this)(errIO, "failed to write data");
+    (*this)(errWriteFailed, "failed to write data");
 }
 }

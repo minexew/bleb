@@ -24,8 +24,9 @@ enum ErrorKind {
     errNoError = 0,
     errInternal,
     errNotAllowed,
-    errIO,
     errUnexpectedEOF,
+    errReadFailed,
+    errWriteFailed,
     errRepositoryCorruption,
     errNotABlebRepository,
     errNotEnoughMemory,
@@ -82,7 +83,8 @@ private:
 
 class Repository {
 public:
-    Repository(ByteIO* io, bool deleteIO);
+    Repository(ByteIO* io);
+    [[deprecated]] Repository(ByteIO* io, bool deleteIO);
     ~Repository();
     bool open(bool canCreateNew);
     void close();
@@ -91,7 +93,11 @@ public:
     const char* getErrorDesc() const { return error.errorDesc; }
 
     std::unique_ptr<ByteIO> openStream(const char* objectName, int streamCreationMode);
+
+    // FIXME: return?
     void getObjectContents(const char* objectName, uint8_t*& contents_out, size_t& length_out);
+
+    // FIXME: type-safe flags; return?
     void setObjectContents(const char* objectName, const char* contents, int flags);
     void setObjectContents(const char* objectName, const void* contents, size_t length, int flags);
 
@@ -103,6 +109,7 @@ public:
 private:
     Repository(const Repository&) = delete;
 
+    // FIXME: use return value tuple rather than _out arguments
     bool allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, uint64_t streamLengthHint, uint64_t spanLength);
 
     uint8_t* getEntryBuffer(size_t size);
