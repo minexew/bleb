@@ -27,7 +27,7 @@ public:
 
     void reserve(size_t requiredCapacity) {
         if (requiredCapacity > capacity) {
-            T* newMemory = reinterpret_cast<T*>(realloc(memory, capacity * sizeof(T)));
+            T* newMemory = reinterpret_cast<T*>(realloc(memory, requiredCapacity * sizeof(T)));
             if (!newMemory)
                 throw std::bad_alloc();
 
