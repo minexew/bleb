@@ -5,6 +5,7 @@
 #include <cstdlib>
 
 #include <memory>
+#include <vector>
 
 namespace bleb {
 
@@ -128,8 +129,7 @@ private:
     std::unique_ptr<RepositoryDirectory> contentDirectory;
 
     // entry buffer
-    uint8_t* entryBuffer;
-    size_t entryBufferSize;
+    std::vector<uint8_t> entryBuffer;
 
     ErrorStruct_ error;
 

@@ -27,4 +27,4 @@ os:
 # AddressSanitizer on Travis linux instances is a hot pile of shit
 matrix:
   allow_failures:
-- os: linux
+    - os: linux

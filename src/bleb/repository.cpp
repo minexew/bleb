@@ -40,16 +40,11 @@ template <typename T> static T roundUpBlockLength(T streamLengthHint, T blockLen
 Repository::Repository(ByteIO* io) {
     this->io = io;
 
-    this->entryBuffer = nullptr;
-    this->entryBufferSize = 0;
-
     this->allocationGranularity = 32;
 }
 
 Repository::~Repository() {
     close();
-
-    free(entryBuffer);
 }
 
 bool Repository::open(bool canCreateNew) {
@@ -147,10 +142,9 @@ bool Repository::allocateSpan(uint64_t& location_out, SpanHeader_t& header_out, 
 }
 
 uint8_t* Repository::getEntryBuffer(size_t size) {
-    if (size > entryBufferSize)
-        entryBuffer = (uint8_t*) realloc(entryBuffer, align(size, 32));
+    entryBuffer.reserve(size);
 
-    return entryBuffer;
+    return &entryBuffer[0];
 }
 
 void Repository::getObjectContents(const char* objectName, uint8_t*& contents_out, size_t& length_out) {
