@@ -90,7 +90,7 @@ bool Repository::open(bool canCreateNew) {
         // create Content Directory
         // cds = Content Directory Stream
 
-        auto cds = new RepositoryStream(this, io, cdsDescrLocation,
+        auto cds = std::make_unique<RepositoryStream>(this, io, cdsDescrLocation,
                 contentDirectoryReserveLength,
                 contentDirectoryExpectedSize);
 
@@ -98,7 +98,7 @@ bool Repository::open(bool canCreateNew) {
         if (!cds->hasFirstSpan())
             return error.writeError(), false;
 
-        contentDirectory = new RepositoryDirectory(this, cds);
+        contentDirectory = std::make_unique<RepositoryDirectory>(this, std::move(cds));
     }
     else {
         if (!retrieveStruct(io, 0, prologue))
@@ -112,8 +112,8 @@ bool Repository::open(bool canCreateNew) {
 
         //diagnostic("repo:\tHeader: format version %d", prologue.formatVersion);
 
-        auto cds = new RepositoryStream(this, io, cdsDescrLocation);
-        contentDirectory = new RepositoryDirectory(this, cds);
+        auto cds = std::make_unique<RepositoryStream>(this, io, cdsDescrLocation);
+        contentDirectory = std::make_unique<RepositoryDirectory>(this, std::move(cds));
     }
 
     isOpen = true;
@@ -123,7 +123,7 @@ bool Repository::open(bool canCreateNew) {
 void Repository::close() {
     if (isOpen) {
         //diagnostic("repo:\tClosing Content Directory");
-        delete contentDirectory;
+        contentDirectory.reset();
 
         isOpen = false;
     }

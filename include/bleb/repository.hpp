@@ -103,8 +103,8 @@ public:
 
     void setAllocationGranularity(SizeType value) { this->allocationGranularity = value; }
 
-    DirectoryIterator begin() { return DirectoryIterator(this, contentDirectory, 0); }
-    DirectoryIterator end() { return DirectoryIterator(this, contentDirectory, (SizeType) -1); }
+    DirectoryIterator begin() { return DirectoryIterator(this, contentDirectory.get(), 0); }
+    DirectoryIterator end() { return DirectoryIterator(this, contentDirectory.get(), (SizeType) -1); }
 
 private:
     Repository(const Repository&) = delete;
@@ -122,7 +122,7 @@ private:
     bool deleteIO;
     bool isOpen = false;
 
-    RepositoryDirectory* contentDirectory;
+    std::unique_ptr<RepositoryDirectory> contentDirectory;
 
     // entry buffer
     uint8_t* entryBuffer;

@@ -1,5 +1,5 @@
 language: cpp
-sudo: false
+sudo: true      # sadly needed for LeakSanitizer
 dist: trusty
 addons:
   apt:

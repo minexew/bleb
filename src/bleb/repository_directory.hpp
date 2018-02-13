@@ -10,8 +10,7 @@ class RepositoryStream;
 
 class RepositoryDirectory {
 public:
-    RepositoryDirectory(Repository* repo, RepositoryStream* directoryStream);
-    ~RepositoryDirectory();
+    RepositoryDirectory(Repository* repo, std::unique_ptr<RepositoryStream> directoryStream);
 
     bool getObjectContents(const char* objectName, uint8_t*& contents_out, size_t& length_out);
     bool setObjectContents(const char* objectName, const uint8_t* contents, size_t contentsLength,
@@ -30,7 +29,7 @@ private:
     bool overwriteObjectEntryAt(uint64_t pos, const uint8_t* entryBytes, size_t entryLength);
 
     Repository* repo;
-    RepositoryStream* directoryStream;
+    std::unique_ptr<RepositoryStream> directoryStream;
 
     friend class DirectoryIterator;
 };
