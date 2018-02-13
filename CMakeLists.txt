@@ -17,13 +17,18 @@ file(GLOB test_sources
 )
 
 add_library(${PROJECT_NAME} ${sources})
-
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 
 add_executable(${PROJECT_NAME}_test ${sources} ${test_sources})
-
 target_include_directories(${PROJECT_NAME}_test PUBLIC include)
 
 # AddressSanitizer (disable if it's giving you trouble)
 target_compile_options(${PROJECT_NAME}_test PRIVATE -fsanitize=address)
 target_link_libraries(${PROJECT_NAME}_test PUBLIC -fsanitize=address)
+
+add_executable(blebtool ${sources} src/blebtool.cpp)
+target_include_directories(blebtool PUBLIC include)
+
+# AddressSanitizer (disable if it's giving you trouble)
+target_compile_options(blebtool PRIVATE -fsanitize=address)
+target_link_libraries(blebtool PUBLIC -fsanitize=address)
