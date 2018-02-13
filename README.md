@@ -1,6 +1,6 @@
 ![Bleb](http://i.imgur.com/5hycZj5.png)
 
-### Structured Object Repository
+### Structured Object Repository [![build status](https://api.travis-ci.org/minexew/bleb.svg?branch=master)](https://travis-ci.org/minexew/bleb)
 ---
 >In medicine, a bleb is a large blister (usually approximately hemispherical) filled with serous fluid.
 >&mdash; Wikipedia
