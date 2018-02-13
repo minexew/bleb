@@ -183,4 +183,8 @@ void Repository::setObjectContents(const char* objectName, const void* contents,
     contentDirectory->setObjectContents(objectName, (const uint8_t*) contents, length,
             flags, ObjectEntryPrologueHeader_t::kIsText);
 }
+
+void Repository::setOwnedIO(std::unique_ptr<ByteIO>&& io) {
+    this->ownedIO = std::move(io);
+}
 }

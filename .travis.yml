@@ -1,5 +1,5 @@
 language: cpp
-sudo: true      # sadly needed for LeakSanitizer
+sudo: false
 dist: trusty
 addons:
   apt:
@@ -23,3 +23,8 @@ compiler:
 os:
   - linux
   - osx
+
+# AddressSanitizer on Travis linux instances is a hot pile of shit
+matrix:
+  allow_failures:
+- os: linux

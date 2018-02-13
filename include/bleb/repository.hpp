@@ -97,11 +97,13 @@ public:
     // FIXME: return?
     void getObjectContents(const char* objectName, uint8_t*& contents_out, size_t& length_out);
 
+    void setAllocationGranularity(SizeType value) { this->allocationGranularity = value; }
+
     // FIXME: type-safe flags; return?
     void setObjectContents(const char* objectName, const char* contents, int flags);
     void setObjectContents(const char* objectName, const void* contents, size_t length, int flags);
 
-    void setAllocationGranularity(SizeType value) { this->allocationGranularity = value; }
+    void setOwnedIO(std::unique_ptr<ByteIO>&& io);
 
     DirectoryIterator begin() { return DirectoryIterator(this, contentDirectory.get(), 0); }
     DirectoryIterator end() { return DirectoryIterator(this, contentDirectory.get(), (SizeType) -1); }
@@ -119,6 +121,8 @@ private:
             size_t contentsLength, unsigned int flags);
 
     ByteIO* io;
+    std::unique_ptr<ByteIO> ownedIO;
+
     bool deleteIO;
     bool isOpen = false;
 
