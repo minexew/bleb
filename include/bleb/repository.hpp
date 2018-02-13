@@ -1,11 +1,12 @@
 #pragma once
 
+#include <bleb/buffer.hpp>
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
 #include <memory>
-#include <vector>
 
 namespace bleb {
 
@@ -129,7 +130,7 @@ private:
     std::unique_ptr<RepositoryDirectory> contentDirectory;
 
     // entry buffer
-    std::vector<uint8_t> entryBuffer;
+    Buffer<uint8_t> entryBuffer;
 
     ErrorStruct_ error;
 

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef bleb_byteio_vector_hpp
+#define bleb_byteio_vector_hpp
 
 #include <bleb/byteio.hpp>
 
@@ -6,6 +7,8 @@
 #include <vector>
 
 namespace bleb {
+
+// This implementation is rather inefficient; it is recommended to use it only for testing
 class VectorByteIO : public ByteIO {
 public:
     VectorByteIO(size_t reserveSize, bool allowExpansion) : allowExpansion(allowExpansion) {
@@ -52,4 +55,7 @@ private:
     std::vector<uint8_t> bytes;
     bool allowExpansion;
 };
+
 }
+
+#endif
