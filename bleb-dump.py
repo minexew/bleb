@@ -100,7 +100,7 @@ with open(inputFilename, 'rb') as input:
 			HAS_STORAGE_DESCR = 0x0004
 			HAS_HASH128 = 0x0008
 			HAS_INLINE_PAYLOAD = 0x0010
-			IS_TEXT = 0x1001
+			IS_TEXT = 0x0100
 
 			if prologueHeader[1] & HAS_STREAM_DESCR:
 				streamDescr = unpackStruct(StreamDescriptor_t, dir)

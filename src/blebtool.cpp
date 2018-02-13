@@ -159,7 +159,7 @@ int main(int argc, const char **argv)
         args::Flag noInline(parser, "noInline", "do not use an Inline Payload for this object", {"no-inline"});
         parser.Parse();
 
-        return executePutCommand(objectName.Get(), repository.Get(), inputFile.Get(), text.Get(), noInline);
+        return executePutCommand(objectName.Get(), repository.Get(), inputFile.Get(), text.Get(), noInline.Get());
     });
 
     args::Group arguments("arguments");

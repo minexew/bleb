@@ -31,7 +31,7 @@ Directory Stream
                         0x0004 = has storage descriptor
                         0x0008 = has md5 hash
                         0x0010 = has inline payload
-                        0x1001 = is text
+                        0x0100 = is text (informative only; object contents should be a valid UTF-8 bitstream)
         uint16_t nameLength
         uint8_t[] name
 
