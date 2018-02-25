@@ -25,7 +25,7 @@ public:
         close();
     }
 
-    void close() {
+    void close() override {
         if (close_ && file) {
             fclose(file);
             file = NULL;
