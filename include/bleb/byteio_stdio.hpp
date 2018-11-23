@@ -2,10 +2,7 @@
 
 #include <bleb/byteio.hpp>
 
-#include <cassert>
 #include <cstdio>
-
-// FIXME: replace assert
 
 namespace bleb {
 class StdioFileByteIO : public ByteIO {
