@@ -99,7 +99,11 @@ int executePutCommand(std::string objectName, std::string repository, std::strin
     else {
         std::unique_ptr<bleb::ByteIO> stream(repo->openStream(objectName.c_str(),
                                                               bleb::kStreamCreate | bleb::kStreamTruncate));
-        assert(stream);
+        if (!stream) {
+            fprintf(stderr, "blebtool: failed to open stream '%s' for writing\n", objectName.c_str());
+            return -1;
+        }
+
         size_t pos = 0;
 
         FILE* input = inputFile.empty() ? stdin : fopen(inputFile.c_str(), "rb");
